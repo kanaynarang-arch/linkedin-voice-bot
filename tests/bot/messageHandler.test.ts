@@ -76,6 +76,37 @@ describe("handleTextMessage", () => {
     expect(replies.join("\n")).toMatch(/already sent this idea/i);
     expect(await container.ideas.listByUser(user.id)).toHaveLength(1);
   });
+
+  it("retries analysis when resending text whose first attempt never got analyzed", async () => {
+    // Simulates a real production incident: the first attempt's AI call
+    // failed after the idea row was already created, leaving it with no
+    // analysis. Resending the identical text must actually retry - not
+    // repeat "already sent, run /write" forever, since /write only drafts
+    // from an existing analysis and can never produce one from scratch.
+    const { container, ai } = await createTestSetup(1);
+    const user = await container.users.getOrCreate("chat-1");
+    await container.posts.add(user.id, "a post");
+    ai.queueJSON(sampleVoiceProfilePayload());
+    await container.voiceProfileService.analyze(user.id);
+
+    const orphanedIdea = await container.ideas.create(user.id, "an idea whose analysis failed");
+    expect(await container.analyses.getLatestForIdea(orphanedIdea.id)).toBeNull();
+
+    const jsonCallsBefore = ai.jsonCalls.length;
+    ai.queueJSON(WORTH_NO_RESEARCH);
+    ai.queueText("Draft after retry.");
+    const { ctx, replies } = createFakeCtx(container, user.id);
+    await handleTextMessage(ctx, "an idea whose analysis failed");
+
+    expect(ai.jsonCalls.length).toBe(jsonCallsBefore + 1);
+    expect(replies.join("\n")).not.toMatch(/already sent this idea/i);
+    expect(replies.join("\n")).toContain("Draft after retry.");
+
+    const ideas = await container.ideas.listByUser(user.id);
+    expect(ideas).toHaveLength(2);
+    const newIdea = ideas.find((i) => i.id !== orphanedIdea.id);
+    expect(newIdea && (await container.analyses.getLatestForIdea(newIdea.id))).not.toBeNull();
+  });
 });
 
 describe("handleNonTextMessage", () => {

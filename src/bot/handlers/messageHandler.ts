@@ -50,26 +50,30 @@ export async function handleTextMessage(ctx: BotContext, text: string): Promise<
     return;
   }
 
+  // Only treat this as a real duplicate if the earlier attempt actually
+  // finished analysis. An idea whose first attempt errored out before
+  // analysis completed (e.g. a transient AI failure) has no analysis row -
+  // silently re-showing "already sent" for that case would trap the user:
+  // resending the identical text can never get past this check, and /write
+  // can't help either since it only drafts from an *existing* analysis, it
+  // doesn't run one. So an unanalyzed "duplicate" just falls through and
+  // gets processed as a fresh attempt below.
   const duplicate = await ctx.container.ideaPipeline.findDuplicate(ctx.appUserId, trimmed);
   if (duplicate) {
     const analysis = await ctx.container.analyses.getLatestForIdea(duplicate.id);
-    if (!analysis) {
-      await ctx.reply(
-        `You already sent this idea on ${duplicate.createdAt.slice(0, 10)} (#${duplicate.id}), but it hasn't been analyzed yet. Send /write ${duplicate.id} to analyze it now.`,
+    if (analysis) {
+      const draft = await ctx.container.drafts.getLatestForIdea(duplicate.id);
+      const research = parseResearchJson(analysis.researchJson);
+      await replyLong(
+        ctx,
+        [
+          `You already sent this idea on ${duplicate.createdAt.slice(0, 10)} (#${duplicate.id}). Here's what I found then:`,
+          "",
+          formatPipelineResult({ idea: duplicate, analysis, research, draft }),
+        ].join("\n"),
       );
       return;
     }
-    const draft = await ctx.container.drafts.getLatestForIdea(duplicate.id);
-    const research = parseResearchJson(analysis.researchJson);
-    await replyLong(
-      ctx,
-      [
-        `You already sent this idea on ${duplicate.createdAt.slice(0, 10)} (#${duplicate.id}). Here's what I found then:`,
-        "",
-        formatPipelineResult({ idea: duplicate, analysis, research, draft }),
-      ].join("\n"),
-    );
-    return;
   }
 
   await ctx.reply("Got it - thinking this through...");
