@@ -5,7 +5,7 @@ const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1, "TELEGRAM_BOT_TOKEN is required"),
   TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID is required"),
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
-  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_MODEL: z.string().default("gemini-3.6-flash"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required (a Postgres connection string)"),
   MIN_POSTS_FOR_ANALYSIS: z.coerce.number().int().positive().default(5),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
