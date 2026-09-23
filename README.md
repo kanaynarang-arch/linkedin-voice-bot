@@ -38,7 +38,7 @@ Raw idea  ->  Idea analysis  ->  Current-context research  ->  Draft generation 
 - A Telegram bot token (create one via [@BotFather](https://t.me/BotFather))
 - Your Telegram chat ID (e.g. from [@userinfobot](https://t.me/userinfobot))
 - A Gemini API key ([Google AI Studio](https://aistudio.google.com/apikey))
-- A Postgres database (Neon, via Vercel's Marketplace, is the intended one -
+- A Postgres database (Supabase, via Vercel's Marketplace, is the intended one -
   see [Deploying to Vercel](#deploying-to-vercel) - but any Postgres works,
   including a local one for development)
 
@@ -74,14 +74,19 @@ other chat is silently ignored.
 1. **Push this repo to GitHub** (if you haven't already) and import it at
    [vercel.com/new](https://vercel.com/new). No build configuration is
    needed - `api/telegram.ts` is picked up automatically as a Vercel Function.
-2. **Add a Postgres database**: in the project's Storage tab, add the **Neon**
-   integration from the Marketplace. This provisions a database and injects
-   `DATABASE_URL` into your project automatically.
-3. **Set the remaining environment variables** in the project's Settings ->
-   Environment Variables: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
-   `GEMINI_API_KEY`, and a `TELEGRAM_WEBHOOK_SECRET` (any random string, e.g.
-   `openssl rand -hex 24`) to verify that webhook calls really come from
-   Telegram. Redeploy after adding them.
+2. **Add a Postgres database**: in the project's Storage tab, add the
+   **Supabase** integration from the Marketplace. This provisions a database
+   and injects several connection strings (`POSTGRES_URL`,
+   `POSTGRES_URL_NON_POOLING`, etc.) but not `DATABASE_URL` itself - copy the
+   value of `POSTGRES_URL_NON_POOLING` into a `DATABASE_URL` environment
+   variable (Settings -> Environment Variables). The direct, non-pooled
+   connection is used deliberately: Supabase's pooled connection runs through
+   PgBouncer in transaction mode, which doesn't support the prepared
+   statements `pg` uses for parameterized queries.
+3. **Set the remaining environment variables**: `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID`, `GEMINI_API_KEY`, and a `TELEGRAM_WEBHOOK_SECRET` (any
+   random string, e.g. `openssl rand -hex 24`) to verify that webhook calls
+   really come from Telegram. Redeploy after adding them.
 4. **Apply the schema** against the new database: pull the env vars locally
    (`vercel env pull .env.local` if you have the CLI, or copy `DATABASE_URL`
    from the dashboard into your `.env`) and run `npm run migrate`.
@@ -122,7 +127,7 @@ Anything else you send is treated as a raw content idea.
   (evaluate -> research -> draft), and the Voice Profile / idea / draft types.
 - `src/db/` - Postgres schema and repositories (users, posts, voice profiles,
   ideas, analyses, drafts, conversation state), behind a small `Database`
-  interface so the app doesn't care whether it's talking to Neon or a local
+  interface so the app doesn't care whether it's talking to Supabase or a local
   Postgres.
 - `src/bot/` - Telegraf wiring, commands, message routing, formatting, and
   error/access-control middleware. This is the only layer that knows about

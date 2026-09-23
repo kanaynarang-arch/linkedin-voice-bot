@@ -5,7 +5,7 @@ const { Pool } = pg;
 
 /**
  * Thin query interface every repository depends on. Production is backed
- * by a real `pg.Pool` (Neon Postgres); tests back the same interface with
+ * by a real `pg.Pool` (Supabase/any Postgres); tests back the same interface with
  * an in-memory pg-mem pool, so repository code and its Postgres dialect
  * never diverge between the two.
  */
@@ -31,15 +31,27 @@ function isLocalConnection(connectionString: string): boolean {
   return /localhost|127\.0\.0\.1/.test(connectionString);
 }
 
+/**
+ * Recent pg-connection-string versions parse a `sslmode=require` query
+ * param into strict certificate-verification SSL options, which then wins
+ * over an explicit `ssl` option passed to `Pool` and breaks against
+ * managed Postgres providers (Neon, Supabase) whose pooler certificate
+ * chains Node's default trust store doesn't resolve. Stripping SSL-related
+ * query params here means our explicit `ssl` option below is the only
+ * source of truth.
+ */
+function stripSslParams(connectionString: string): string {
+  return connectionString.replace(/([?&])(sslmode|channel_binding)=[^&]*&?/gi, "$1").replace(/[?&]$/, "");
+}
+
 /** Opens a pooled Postgres connection and applies the schema (idempotent). */
 export async function openDatabase(connectionString: string): Promise<Database> {
   const pool = new Pool({
-    connectionString,
-    // Neon (and most managed Postgres providers) terminate SSL behind a
-    // connection pooler whose certificate chain Node's default trust
-    // store doesn't always resolve cleanly - this is the standard
-    // node-postgres workaround. Local development databases don't use
-    // SSL at all.
+    connectionString: stripSslParams(connectionString),
+    // Local development databases don't use SSL at all; managed providers
+    // do, but with certificate chains Node's default trust store doesn't
+    // always resolve cleanly - this is the standard node-postgres
+    // workaround for that.
     ssl: isLocalConnection(connectionString) ? false : { rejectUnauthorized: false },
     max: 5,
   });
