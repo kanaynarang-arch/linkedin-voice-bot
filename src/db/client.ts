@@ -32,19 +32,25 @@ function isLocalConnection(connectionString: string): boolean {
 }
 
 /**
- * Recent pg-connection-string versions parse a `sslmode=require` query
+ * Recent pg-connection-string versions parse an `sslmode=require` query
  * param into strict certificate-verification SSL options, which then wins
  * over an explicit `ssl` option passed to `Pool` and breaks against
  * managed Postgres providers (Neon, Supabase) whose pooler certificate
  * chains Node's default trust store doesn't resolve. Stripping SSL-related
  * query params here means our explicit `ssl` option below is the only
- * source of truth.
+ * source of truth. Uses the URL API rather than a regex so it correctly
+ * removes every matching param regardless of order or adjacency (Neon's
+ * default connection strings include both `sslmode` and `channel_binding`
+ * back-to-back, which a naive regex can under-strip).
  */
-function stripSslParams(connectionString: string): string {
-  return connectionString.replace(/([?&])(sslmode|channel_binding)=[^&]*&?/gi, "$1").replace(/[?&]$/, "");
+export function stripSslParams(connectionString: string): string {
+  const url = new URL(connectionString);
+  url.searchParams.delete("sslmode");
+  url.searchParams.delete("channel_binding");
+  return url.toString();
 }
 
-/** Opens a pooled Postgres connection and applies the schema (idempotent). */
+/** Opens a pooled Postgres connection. Run `npm run migrate` separately to apply the schema. */
 export async function openDatabase(connectionString: string): Promise<Database> {
   const pool = new Pool({
     connectionString: stripSslParams(connectionString),
@@ -53,14 +59,28 @@ export async function openDatabase(connectionString: string): Promise<Database> 
     // always resolve cleanly - this is the standard node-postgres
     // workaround for that.
     ssl: isLocalConnection(connectionString) ? false : { rejectUnauthorized: false },
-    max: 5,
+    // Kept small deliberately: on Vercel each cold-started Fluid Compute
+    // instance opens its own pool and holds it for the instance's
+    // lifetime (nothing ever calls pool.end() there), so a bursty period
+    // of concurrent cold starts multiplies this number by however many
+    // instances spin up. A low per-instance ceiling keeps that bounded
+    // well under managed-Postgres connection limits.
+    max: 3,
   });
-  const db = new PgDatabase(pool);
+  return new PgDatabase(pool);
+}
+
+/** Applies the schema (idempotent - safe to run repeatedly). Called explicitly via `npm run migrate`, not on every request. */
+export async function applySchema(db: Database): Promise<void> {
   await db.query(SCHEMA_SQL);
-  return db;
 }
 
 /** Wraps an already-constructed pg-compatible Pool (used by tests with pg-mem). */
 export function wrapPool(pool: pg.Pool): Database {
   return new PgDatabase(pool);
+}
+
+/** True if `error` is a Postgres unique-constraint violation (SQLSTATE 23505). */
+export function isUniqueViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }

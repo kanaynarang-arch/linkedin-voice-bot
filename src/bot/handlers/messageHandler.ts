@@ -3,21 +3,8 @@ import { replyLong } from "../reply.js";
 import { formatPipelineResult } from "../formatting.js";
 import { handlePostsCollectionMessage } from "../postsCollection.js";
 import { parseResearchJson } from "../../domain/ideaPipeline.js";
-
-const KNOWN_COMMANDS = new Set([
-  "start",
-  "help",
-  "addposts",
-  "done",
-  "cancel",
-  "posts",
-  "clearposts",
-  "analyze",
-  "profile",
-  "ideas",
-  "write",
-  "rewrite",
-]);
+import { KNOWN_COMMAND_NAMES } from "../commandRegistry.js";
+import { parseCommandName, formatDate } from "../telegramUtils.js";
 
 /**
  * Handles every plain-text message that isn't a recognized command.
@@ -28,8 +15,8 @@ export async function handleTextMessage(ctx: BotContext, text: string): Promise<
   const trimmed = text.trim();
 
   if (trimmed.startsWith("/")) {
-    const command = trimmed.slice(1).split(/[\s@]/)[0]?.toLowerCase();
-    if (!command || !KNOWN_COMMANDS.has(command)) {
+    const command = parseCommandName(trimmed);
+    if (!command || !KNOWN_COMMAND_NAMES.has(command)) {
       await ctx.reply(`Unknown command "${trimmed.split(/\s/)[0]}". Send /help for the list of commands.`);
       return;
     }
@@ -67,7 +54,7 @@ export async function handleTextMessage(ctx: BotContext, text: string): Promise<
       await replyLong(
         ctx,
         [
-          `You already sent this idea on ${duplicate.createdAt.slice(0, 10)} (#${duplicate.id}). Here's what I found then:`,
+          `You already sent this idea on ${formatDate(duplicate.createdAt)} (#${duplicate.id}). Here's what I found then:`,
           "",
           formatPipelineResult({ idea: duplicate, analysis, research, draft }),
         ].join("\n"),

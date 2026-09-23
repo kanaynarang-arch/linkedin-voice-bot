@@ -8,6 +8,28 @@ import { splitForTelegram } from "./telegramUtils.js";
 const log = createLogger("bot");
 
 /**
+ * Skips an update Telegram has already delivered once. A webhook call
+ * slow enough to outlast Telegram's delivery timeout (a cold start plus
+ * a multi-step AI pipeline can do this) triggers a retry of the *same*
+ * update while the first attempt may still be in flight - without this,
+ * that produces duplicate ideas, drafts, and replies for what the user
+ * experiences as a single message.
+ */
+export function idempotency(container: Container): MiddlewareFn<BotContext> {
+  return async (ctx, next) => {
+    const updateId = ctx.update?.update_id;
+    if (updateId === undefined) return next();
+
+    const isFirstDelivery = await container.processedUpdates.tryClaim(updateId);
+    if (!isFirstDelivery) {
+      log.warn("Skipping duplicate Telegram update", { updateId });
+      return;
+    }
+    return next();
+  };
+}
+
+/**
  * Restricts the bot to a single owner chat (this is a personal tool, not
  * a public bot) and resolves the internal app user for every update.
  * Updates from any other chat are logged and silently dropped.

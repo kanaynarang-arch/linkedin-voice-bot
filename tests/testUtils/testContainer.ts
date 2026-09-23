@@ -1,7 +1,6 @@
 import { newDb } from "pg-mem";
 import type pg from "pg";
-import { wrapPool, type Database } from "../../src/db/client.js";
-import { SCHEMA_SQL } from "../../src/db/schema.js";
+import { wrapPool, applySchema, type Database } from "../../src/db/client.js";
 import { buildContainerFromParts, type Container } from "../../src/container.js";
 import { FakeAIProvider } from "./fakeAIProvider.js";
 
@@ -21,7 +20,7 @@ export async function createTestDb(): Promise<Database> {
   const pool = new Pool() as unknown as pg.Pool;
 
   const db = wrapPool(pool);
-  await db.query(SCHEMA_SQL);
+  await applySchema(db);
   return db;
 }
 

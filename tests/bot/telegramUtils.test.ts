@@ -26,4 +26,20 @@ describe("splitForTelegram", () => {
     const original = text.replace(/\s+/g, " ").trim();
     expect(rejoined).toBe(original);
   });
+
+  it("never splits a UTF-16 surrogate pair when hard-cutting a run of astral characters", () => {
+    // No whitespace anywhere near the boundary forces the hard-cut
+    // fallback (splitAt = maxLen), which previously could land inside an
+    // emoji's high/low surrogate pair.
+    const text = "🔥".repeat(200);
+    const chunks = splitForTelegram(text, 50);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      // A lone surrogate round-trips differently through UTF-8 (Node
+      // replaces it with U+FFFD) than a valid pair does.
+      expect(Buffer.from(chunk, "utf-8").toString("utf-8")).toBe(chunk);
+    }
+    expect(chunks.join("")).toBe(text);
+  });
 });

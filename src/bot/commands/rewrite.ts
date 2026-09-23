@@ -9,24 +9,29 @@ export async function handleRewrite(ctx: BotContext, args: string): Promise<void
   }
 
   const [maybeId, ...rest] = trimmed.split(/\s+/);
-  let ideaId: number | null = null;
-  let feedback = trimmed;
+  let ideaId: number;
+  let feedback: string;
 
   if (maybeId && /^\d+$/.test(maybeId)) {
+    // A numeric first token is always treated as an id attempt - if it
+    // doesn't resolve, say so rather than silently reinterpreting the
+    // whole string (including the number) as feedback for some other
+    // idea, which would be confusing and wrong.
     const candidate = await ctx.container.ideas.getById(Number(maybeId));
-    if (candidate && candidate.userId === ctx.appUserId) {
-      ideaId = candidate.id;
-      feedback = rest.join(" ");
+    if (!candidate || candidate.userId !== ctx.appUserId) {
+      await ctx.reply(`I couldn't find idea #${maybeId}. Send /ideas to see your recent ideas.`);
+      return;
     }
-  }
-
-  if (ideaId === null) {
+    ideaId = candidate.id;
+    feedback = rest.join(" ");
+  } else {
     const latest = await ctx.container.ideas.getLatestByUser(ctx.appUserId);
     if (!latest) {
       await ctx.reply("No ideas yet to rewrite. Send me a thought first.");
       return;
     }
     ideaId = latest.id;
+    feedback = trimmed;
   }
 
   if (!feedback.trim()) {

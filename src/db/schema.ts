@@ -57,11 +57,32 @@ CREATE TABLE IF NOT EXISTS drafts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_drafts_idea ON drafts(idea_id);
+-- Backstop against the version-number race: two concurrent draft writes
+-- for the same idea (e.g. a duplicate Telegram webhook delivery) can
+-- both compute the same "next version" before either commits. This
+-- turns that into a clear constraint-violation error instead of two
+-- silently-ambiguous rows sharing a version number.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_drafts_idea_version ON drafts(idea_id, version);
 
 CREATE TABLE IF NOT EXISTS conversation_states (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   state TEXT NOT NULL,
   data_json TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Same backstop for voice profiles: guarantees at most one active
+-- profile per user at the database level, regardless of how the
+-- application races two concurrent /analyze calls.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_profiles_one_active ON voice_profiles(user_id) WHERE is_active;
+
+-- Telegram idempotency: a webhook call that runs long enough (a slow AI
+-- pipeline under cold start) can outlast Telegram's delivery timeout,
+-- triggering a retry of the *same* update while the first attempt is
+-- still in flight. Recording update_id lets the access-control
+-- middleware skip an update it has already started processing.
+CREATE TABLE IF NOT EXISTS processed_updates (
+  update_id BIGINT PRIMARY KEY,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `;

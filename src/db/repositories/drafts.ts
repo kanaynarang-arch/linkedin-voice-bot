@@ -36,14 +36,17 @@ export class DraftsRepository {
     model: string,
     feedback: string | null = null,
   ): Promise<DraftRecord> {
-    const previous = await this.getLatestForIdea(ideaId);
-    const nextVersion = (previous?.version ?? 0) + 1;
-
+    // Computes the next version in the same statement as the insert
+    // (rather than a separate SELECT then INSERT) to close almost all of
+    // the race window between two concurrent draft writes for the same
+    // idea; the idx_drafts_idea_version unique index is the hard backstop
+    // for the remaining sliver that a single statement can't close.
     const rows = await this.db.query<DraftRow>(
       `INSERT INTO drafts (idea_id, analysis_id, content, version, feedback, model)
-         VALUES ($1, $2, $3, $4, $5, $6)
+         SELECT $1::integer, $2::integer, $3::text, COALESCE(MAX(version), 0) + 1, $4::text, $5::text
+         FROM drafts WHERE idea_id = $1::integer
          RETURNING *`,
-      [ideaId, analysisId, content, nextVersion, feedback, model],
+      [ideaId, analysisId, content, feedback, model],
     );
     const row = rows[0];
     if (!row) throw new Error("Failed to create draft record");

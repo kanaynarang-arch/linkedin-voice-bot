@@ -26,18 +26,32 @@ export class PostsRepository {
     return toRecord(row);
   }
 
+  /** Inserts every post in a single statement, so a partial-batch paste is never left half-saved on a mid-request failure. */
   async addMany(userId: number, contents: string[]): Promise<LinkedInPostRecord[]> {
-    const results: LinkedInPostRecord[] = [];
-    for (const content of contents) {
-      results.push(await this.add(userId, content));
-    }
-    return results;
+    if (contents.length === 0) return [];
+    const placeholders = contents.map((_, i) => `($1, $${i + 2})`).join(", ");
+    const rows = await this.db.query<PostRow>(
+      `INSERT INTO linkedin_posts (user_id, content) VALUES ${placeholders} RETURNING *`,
+      [userId, ...contents],
+    );
+    return rows.map(toRecord);
   }
 
   async listByUser(userId: number): Promise<LinkedInPostRecord[]> {
     const rows = await this.db.query<PostRow>(
       "SELECT * FROM linkedin_posts WHERE user_id = $1 ORDER BY created_at ASC",
       [userId],
+    );
+    return rows.map(toRecord);
+  }
+
+  /** The `limit` most recent posts, oldest-first (for use as prompt examples). */
+  async listRecentByUser(userId: number, limit: number): Promise<LinkedInPostRecord[]> {
+    const rows = await this.db.query<PostRow>(
+      `SELECT * FROM (
+         SELECT * FROM linkedin_posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+       ) recent ORDER BY created_at ASC`,
+      [userId, limit],
     );
     return rows.map(toRecord);
   }

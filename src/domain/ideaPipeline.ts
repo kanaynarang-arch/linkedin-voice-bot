@@ -9,6 +9,7 @@ import type { PostsRepository } from "../db/repositories/posts.js";
 import type { VoiceProfileService } from "./voiceProfileService.js";
 import {
   IdeaEvaluationSchema,
+  ResearchResultSchema,
   type AnalysisRecord,
   type DraftRecord,
   type IdeaRecord,
@@ -128,7 +129,7 @@ export class IdeaPipelineService {
     }
 
     const angle =
-      analysis.angle ??
+      analysis.angle ||
       "No strong angle was identified initially - find the most honest, specific angle available and write from there.";
     const research = parseResearchJson(analysis.researchJson);
 
@@ -170,22 +171,16 @@ export class IdeaPipelineService {
       );
     }
 
-    const research = parseResearchJson(analysis.researchJson);
-    const recentPosts = await this.posts.listByUser(userId);
-    const recentPostExcerpts = recentPosts.slice(-RECENT_POSTS_FOR_REFERENCE).map((p) => p.content);
-
-    const { systemInstruction, prompt } = buildDraftGenerationPrompt({
+    return this.generateAndSaveDraft({
+      userId,
+      idea,
+      analysisId: analysis.id,
       ideaSummary: analysis.ideaSummary,
-      rawIdea: idea.rawText,
-      angle: analysis.angle ?? "",
+      angle: analysis.angle || "",
       voiceProfile: voiceProfile.profile,
-      researchSummary: research?.summary ?? null,
-      recentPostExcerpts,
+      research: parseResearchJson(analysis.researchJson),
       rewrite: { previousDraft: previousDraft.content, feedback: trimmedFeedback },
     });
-
-    const text = await this.ai.generateText({ systemInstruction, prompt });
-    return this.drafts.create(idea.id, analysis.id, text.trim(), this.ai.modelName, trimmedFeedback);
   }
 
   private async requireOwnedIdea(userId: number, ideaId: number): Promise<IdeaRecord> {
@@ -204,9 +199,10 @@ export class IdeaPipelineService {
     angle: string;
     voiceProfile: VoiceProfile;
     research: ResearchResult | null;
+    rewrite?: { previousDraft: string; feedback: string };
   }): Promise<DraftRecord> {
-    const allPosts = await this.posts.listByUser(params.userId);
-    const recentPostExcerpts = allPosts.slice(-RECENT_POSTS_FOR_REFERENCE).map((p) => p.content);
+    const recentPosts = await this.posts.listRecentByUser(params.userId, RECENT_POSTS_FOR_REFERENCE);
+    const recentPostExcerpts = recentPosts.map((p) => p.content);
 
     const { systemInstruction, prompt } = buildDraftGenerationPrompt({
       ideaSummary: params.ideaSummary,
@@ -215,17 +211,25 @@ export class IdeaPipelineService {
       voiceProfile: params.voiceProfile,
       researchSummary: params.research?.summary ?? null,
       recentPostExcerpts,
+      rewrite: params.rewrite,
     });
 
     const text = await this.ai.generateText({ systemInstruction, prompt });
-    return this.drafts.create(params.idea.id, params.analysisId, text.trim(), this.ai.modelName);
+    return this.drafts.create(
+      params.idea.id,
+      params.analysisId,
+      text.trim(),
+      this.ai.modelName,
+      params.rewrite?.feedback ?? null,
+    );
   }
 }
 
 export function parseResearchJson(json: string | null): ResearchResult | null {
   if (!json) return null;
   try {
-    return JSON.parse(json) as ResearchResult;
+    const parsed = ResearchResultSchema.safeParse(JSON.parse(json));
+    return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }

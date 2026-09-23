@@ -56,6 +56,7 @@ export const IdeaEvaluationSchema = z.object({
     .describe("Why this is or isn't worth developing into a post. If not worth developing, explain what's missing."),
   angle: z
     .string()
+    .min(1)
     .nullable()
     .describe("The strongest specific angle to write from. Null if not worth developing."),
   researchQueries: z
@@ -65,16 +66,18 @@ export const IdeaEvaluationSchema = z.object({
 });
 export type IdeaEvaluation = z.infer<typeof IdeaEvaluationSchema>;
 
-export interface ResearchSource {
-  title: string;
-  url: string;
-}
+export const ResearchSourceSchema = z.object({
+  title: z.string(),
+  url: z.string(),
+});
+export type ResearchSource = z.infer<typeof ResearchSourceSchema>;
 
-export interface ResearchResult {
-  used: boolean;
-  summary: string | null;
-  sources: ResearchSource[];
-}
+export const ResearchResultSchema = z.object({
+  used: z.boolean(),
+  summary: z.string().nullable(),
+  sources: z.array(ResearchSourceSchema),
+});
+export type ResearchResult = z.infer<typeof ResearchResultSchema>;
 
 export const DraftResponseSchema = z.object({
   draft: z.string().min(1).describe("The finished LinkedIn post, ready for human review."),

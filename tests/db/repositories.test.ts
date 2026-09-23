@@ -7,6 +7,7 @@ import { IdeasRepository } from "../../src/db/repositories/ideas.js";
 import { AnalysesRepository } from "../../src/db/repositories/analyses.js";
 import { DraftsRepository } from "../../src/db/repositories/drafts.js";
 import { ConversationStateRepository } from "../../src/db/repositories/conversationState.js";
+import { ProcessedUpdatesRepository } from "../../src/db/repositories/processedUpdates.js";
 
 describe("repositories", () => {
   let db: Database;
@@ -100,5 +101,49 @@ describe("repositories", () => {
 
     await states.reset(user.id);
     expect(await states.get(user.id)).toEqual({ state: "idle", data: {} });
+  });
+
+  it("ProcessedUpdatesRepository claims an update id exactly once", async () => {
+    const processedUpdates = new ProcessedUpdatesRepository(db);
+
+    expect(await processedUpdates.tryClaim(12345)).toBe(true);
+    expect(await processedUpdates.tryClaim(12345)).toBe(false);
+    expect(await processedUpdates.tryClaim(12345)).toBe(false);
+    // A different update id is unaffected by an earlier claim.
+    expect(await processedUpdates.tryClaim(67890)).toBe(true);
+  });
+
+  it("DraftsRepository rejects a second draft with the same idea_id and version", async () => {
+    const users = new UsersRepository(db);
+    const ideas = new IdeasRepository(db);
+    const analyses = new AnalysesRepository(db);
+    const user = await users.getOrCreate("chat-1");
+    const idea = await ideas.create(user.id, "an idea");
+    const analysis = await analyses.create({
+      ideaId: idea.id,
+      ideaSummary: "summary",
+      worthDeveloping: true,
+      reasoning: "reasoning",
+      angle: "angle",
+      research: null,
+      model: "test-model",
+    });
+
+    // Bypasses the repository's own version computation to simulate two
+    // concurrent writers both landing on version 1 - the unique index is
+    // the backstop for that race, so the second raw insert must fail
+    // rather than silently succeed with an ambiguous duplicate.
+    await db.query(
+      "INSERT INTO drafts (idea_id, analysis_id, content, version, model) VALUES ($1, $2, $3, 1, $4)",
+      [idea.id, analysis.id, "first", "test-model"],
+    );
+    await expect(
+      db.query("INSERT INTO drafts (idea_id, analysis_id, content, version, model) VALUES ($1, $2, $3, 1, $4)", [
+        idea.id,
+        analysis.id,
+        "second",
+        "test-model",
+      ]),
+    ).rejects.toThrow();
   });
 });

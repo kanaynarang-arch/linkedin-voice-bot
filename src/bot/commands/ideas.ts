@@ -1,9 +1,6 @@
 import type { BotContext } from "../context.js";
 import { replyLong } from "../reply.js";
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
+import { truncate } from "../telegramUtils.js";
 
 export async function handleIdeas(ctx: BotContext): Promise<void> {
   const ideas = await ctx.container.ideas.listByUser(ctx.appUserId, 15);

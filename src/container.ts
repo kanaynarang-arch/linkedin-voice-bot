@@ -7,6 +7,7 @@ import { IdeasRepository } from "./db/repositories/ideas.js";
 import { AnalysesRepository } from "./db/repositories/analyses.js";
 import { DraftsRepository } from "./db/repositories/drafts.js";
 import { ConversationStateRepository } from "./db/repositories/conversationState.js";
+import { ProcessedUpdatesRepository } from "./db/repositories/processedUpdates.js";
 import { GeminiProvider } from "./ai/gemini.js";
 import type { AIProvider, ResearchProvider } from "./ai/provider.js";
 import { VoiceProfileService } from "./domain/voiceProfileService.js";
@@ -23,6 +24,7 @@ export interface Container {
   analyses: AnalysesRepository;
   drafts: DraftsRepository;
   conversationState: ConversationStateRepository;
+  processedUpdates: ProcessedUpdatesRepository;
   voiceProfileService: VoiceProfileService;
   ideaPipeline: IdeaPipelineService;
 }
@@ -51,6 +53,7 @@ export function buildContainerFromParts(
   const analyses = new AnalysesRepository(db);
   const drafts = new DraftsRepository(db);
   const conversationState = new ConversationStateRepository(db);
+  const processedUpdates = new ProcessedUpdatesRepository(db);
 
   const voiceProfileService = new VoiceProfileService(ai, posts, voiceProfiles, minPostsForAnalysis);
   const ideaPipeline = new IdeaPipelineService(ai, ai, ideas, analyses, drafts, posts, voiceProfileService);
@@ -66,6 +69,7 @@ export function buildContainerFromParts(
     analyses,
     drafts,
     conversationState,
+    processedUpdates,
     voiceProfileService,
     ideaPipeline,
   };

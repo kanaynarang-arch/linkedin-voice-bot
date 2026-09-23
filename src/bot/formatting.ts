@@ -1,5 +1,6 @@
 import type { IdeaPipelineResult } from "../domain/ideaPipeline.js";
 import type { ResearchSource, VoiceProfile } from "../domain/types.js";
+import { formatDate } from "./telegramUtils.js";
 
 function formatSources(sources: ResearchSource[]): string {
   return sources
@@ -18,7 +19,7 @@ export function formatPipelineResult(result: IdeaPipelineResult): string {
     return lines.join("\n");
   }
 
-  lines.push("Worth developing", "", "ANGLE", result.analysis.angle ?? "(none identified)");
+  lines.push("Worth developing", "", "ANGLE", result.analysis.angle || "(none identified)");
 
   if (result.research?.used && result.research.summary) {
     lines.push("", "CURRENT CONTEXT", result.research.summary);
@@ -45,7 +46,7 @@ function bulletList(items: string[]): string {
 /** Human-readable rendering of a Voice Profile for the /profile command. */
 export function formatVoiceProfileSummary(profile: VoiceProfile, postCount: number, createdAt: string): string {
   return [
-    `VOICE PROFILE (built from ${postCount} posts on ${createdAt.slice(0, 10)})`,
+    `VOICE PROFILE (built from ${postCount} posts on ${formatDate(createdAt)})`,
     "",
     "Author essence:",
     `  ${profile.authorEssence}`,
