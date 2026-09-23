@@ -47,7 +47,7 @@ export class IdeaPipelineService {
   ) {}
 
   /** Looks for an identical idea already captured for this user, to catch duplicate sends. */
-  findDuplicate(userId: number, rawText: string): IdeaRecord | null {
+  async findDuplicate(userId: number, rawText: string): Promise<IdeaRecord | null> {
     const trimmed = rawText.trim();
     if (!trimmed) return null;
     return this.ideas.findDuplicate(userId, trimmed);
@@ -63,8 +63,8 @@ export class IdeaPipelineService {
       );
     }
 
-    const voiceProfile = this.voiceProfiles.getActiveOrThrow(userId);
-    const idea = this.ideas.create(userId, trimmed);
+    const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
+    const idea = await this.ideas.create(userId, trimmed);
 
     const evaluationPrompt = buildIdeaEvaluationPrompt(trimmed, voiceProfile.profile);
     const evaluation = await generateValidatedJSON(
@@ -82,7 +82,7 @@ export class IdeaPipelineService {
       }
     }
 
-    const analysis = this.analyses.create({
+    const analysis = await this.analyses.create({
       ideaId: idea.id,
       ideaSummary: evaluation.ideaSummary,
       worthDeveloping: evaluation.worthDeveloping,
@@ -92,7 +92,10 @@ export class IdeaPipelineService {
       model: this.ai.modelName,
     });
 
-    this.ideas.setStatus(idea.id, evaluation.worthDeveloping ? "worth_developing" : "not_worth_developing");
+    await this.ideas.setStatus(
+      idea.id,
+      evaluation.worthDeveloping ? "worth_developing" : "not_worth_developing",
+    );
 
     let draft: DraftRecord | null = null;
     if (evaluation.worthDeveloping && evaluation.angle) {
@@ -105,7 +108,7 @@ export class IdeaPipelineService {
         voiceProfile: voiceProfile.profile,
         research,
       });
-      this.ideas.setStatus(idea.id, "drafted");
+      await this.ideas.setStatus(idea.id, "drafted");
     }
 
     log.info("Processed idea", { userId, ideaId: idea.id, worthDeveloping: evaluation.worthDeveloping });
@@ -114,9 +117,9 @@ export class IdeaPipelineService {
 
   /** Re-runs draft generation for an existing, already-analyzed idea (used by /write <id>). */
   async draftForExistingIdea(userId: number, ideaId: number): Promise<IdeaPipelineResult> {
-    const idea = this.requireOwnedIdea(userId, ideaId);
-    const voiceProfile = this.voiceProfiles.getActiveOrThrow(userId);
-    const analysis = this.analyses.getLatestForIdea(ideaId);
+    const idea = await this.requireOwnedIdea(userId, ideaId);
+    const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
+    const analysis = await this.analyses.getLatestForIdea(ideaId);
     if (!analysis) {
       throw new NotFoundError(
         `No analysis found for idea ${ideaId}`,
@@ -138,7 +141,7 @@ export class IdeaPipelineService {
       voiceProfile: voiceProfile.profile,
       research,
     });
-    this.ideas.setStatus(idea.id, "drafted");
+    await this.ideas.setStatus(idea.id, "drafted");
 
     return { idea, analysis, research, draft };
   }
@@ -153,13 +156,13 @@ export class IdeaPipelineService {
       );
     }
 
-    const idea = this.requireOwnedIdea(userId, ideaId);
-    const voiceProfile = this.voiceProfiles.getActiveOrThrow(userId);
-    const analysis = this.analyses.getLatestForIdea(ideaId);
+    const idea = await this.requireOwnedIdea(userId, ideaId);
+    const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
+    const analysis = await this.analyses.getLatestForIdea(ideaId);
     if (!analysis) {
       throw new NotFoundError(`No analysis found for idea ${ideaId}`, "That idea hasn't been analyzed yet.");
     }
-    const previousDraft = this.drafts.getLatestForIdea(ideaId);
+    const previousDraft = await this.drafts.getLatestForIdea(ideaId);
     if (!previousDraft) {
       throw new NotFoundError(
         `No draft found for idea ${ideaId}`,
@@ -168,10 +171,8 @@ export class IdeaPipelineService {
     }
 
     const research = parseResearchJson(analysis.researchJson);
-    const recentPostExcerpts = this.posts
-      .listByUser(userId)
-      .slice(-RECENT_POSTS_FOR_REFERENCE)
-      .map((p) => p.content);
+    const recentPosts = await this.posts.listByUser(userId);
+    const recentPostExcerpts = recentPosts.slice(-RECENT_POSTS_FOR_REFERENCE).map((p) => p.content);
 
     const { systemInstruction, prompt } = buildDraftGenerationPrompt({
       ideaSummary: analysis.ideaSummary,
@@ -187,8 +188,8 @@ export class IdeaPipelineService {
     return this.drafts.create(idea.id, analysis.id, text.trim(), this.ai.modelName, trimmedFeedback);
   }
 
-  private requireOwnedIdea(userId: number, ideaId: number): IdeaRecord {
-    const idea = this.ideas.getById(ideaId);
+  private async requireOwnedIdea(userId: number, ideaId: number): Promise<IdeaRecord> {
+    const idea = await this.ideas.getById(ideaId);
     if (!idea || idea.userId !== userId) {
       throw new NotFoundError(`Idea ${ideaId} not found for user ${userId}`, `I couldn't find idea #${ideaId}.`);
     }
@@ -204,10 +205,8 @@ export class IdeaPipelineService {
     voiceProfile: VoiceProfile;
     research: ResearchResult | null;
   }): Promise<DraftRecord> {
-    const recentPostExcerpts = this.posts
-      .listByUser(params.userId)
-      .slice(-RECENT_POSTS_FOR_REFERENCE)
-      .map((p) => p.content);
+    const allPosts = await this.posts.listByUser(params.userId);
+    const recentPostExcerpts = allPosts.slice(-RECENT_POSTS_FOR_REFERENCE).map((p) => p.content);
 
     const { systemInstruction, prompt } = buildDraftGenerationPrompt({
       ideaSummary: params.ideaSummary,

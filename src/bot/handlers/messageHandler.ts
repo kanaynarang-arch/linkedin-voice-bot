@@ -39,7 +39,7 @@ export async function handleTextMessage(ctx: BotContext, text: string): Promise<
     return;
   }
 
-  const state = ctx.container.conversationState.get(ctx.appUserId);
+  const state = await ctx.container.conversationState.get(ctx.appUserId);
   if (state.state === "collecting_posts") {
     await handlePostsCollectionMessage(ctx, text);
     return;
@@ -50,16 +50,16 @@ export async function handleTextMessage(ctx: BotContext, text: string): Promise<
     return;
   }
 
-  const duplicate = ctx.container.ideaPipeline.findDuplicate(ctx.appUserId, trimmed);
+  const duplicate = await ctx.container.ideaPipeline.findDuplicate(ctx.appUserId, trimmed);
   if (duplicate) {
-    const analysis = ctx.container.analyses.getLatestForIdea(duplicate.id);
+    const analysis = await ctx.container.analyses.getLatestForIdea(duplicate.id);
     if (!analysis) {
       await ctx.reply(
         `You already sent this idea on ${duplicate.createdAt.slice(0, 10)} (#${duplicate.id}), but it hasn't been analyzed yet. Send /write ${duplicate.id} to analyze it now.`,
       );
       return;
     }
-    const draft = ctx.container.drafts.getLatestForIdea(duplicate.id);
+    const draft = await ctx.container.drafts.getLatestForIdea(duplicate.id);
     const research = parseResearchJson(analysis.researchJson);
     await replyLong(
       ctx,

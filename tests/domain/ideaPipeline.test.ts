@@ -6,7 +6,7 @@ import type { FakeAIProvider } from "../testUtils/fakeAIProvider.js";
 
 async function withVoiceProfile(container: Container, ai: FakeAIProvider, userId: number, minPosts = 1) {
   for (let i = 0; i < minPosts; i++) {
-    container.posts.add(userId, `Sample post number ${i}.`);
+    await container.posts.add(userId, `Sample post number ${i}.`);
   }
   ai.queueJSON(sampleVoiceProfilePayload());
   await container.voiceProfileService.analyze(userId);
@@ -37,25 +37,25 @@ describe("IdeaPipelineService", () => {
   let container: Container;
   let ai: FakeAIProvider;
 
-  beforeEach(() => {
-    ({ container, ai } = createTestSetup(1));
+  beforeEach(async () => {
+    ({ container, ai } = await createTestSetup(1));
   });
 
   it("requires an active voice profile before processing an idea", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await expect(container.ideaPipeline.captureAndProcess(user.id, "some idea")).rejects.toThrow(
       MissingVoiceProfileError,
     );
   });
 
   it("rejects empty idea text", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
     await expect(container.ideaPipeline.captureAndProcess(user.id, "   ")).rejects.toThrow(ValidationError);
   });
 
   it("stores a not-worth-developing analysis without researching or drafting", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
     ai.queueJSON(NOT_WORTH);
@@ -65,11 +65,11 @@ describe("IdeaPipelineService", () => {
     expect(result.draft).toBeNull();
     expect(result.research).toBeNull();
     expect(ai.researchCalls).toHaveLength(0);
-    expect(container.ideas.getById(result.idea.id)?.status).toBe("not_worth_developing");
+    expect((await container.ideas.getById(result.idea.id))?.status).toBe("not_worth_developing");
   });
 
   it("researches, drafts, and marks the idea drafted when worth developing with a research query", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
     ai.queueJSON(WORTH_WITH_RESEARCH);
@@ -86,11 +86,11 @@ describe("IdeaPipelineService", () => {
     expect(result.analysis.worthDeveloping).toBe(true);
     expect(result.research?.used).toBe(true);
     expect(result.draft?.content).toContain("honest answer");
-    expect(container.ideas.getById(result.idea.id)?.status).toBe("drafted");
+    expect((await container.ideas.getById(result.idea.id))?.status).toBe("drafted");
   });
 
   it("skips research when no queries are suggested", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
     ai.queueJSON(WORTH_NO_RESEARCH);
@@ -104,25 +104,25 @@ describe("IdeaPipelineService", () => {
   });
 
   it("finds an exact-duplicate idea for the same user", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
     ai.queueJSON(NOT_WORTH);
     const first = await container.ideaPipeline.captureAndProcess(user.id, "the same idea text");
 
-    const duplicate = container.ideaPipeline.findDuplicate(user.id, "the same idea text");
+    const duplicate = await container.ideaPipeline.findDuplicate(user.id, "the same idea text");
     expect(duplicate?.id).toBe(first.idea.id);
   });
 
   it("throws NotFoundError when forcing a draft for an idea with no analysis", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
-    const idea = container.ideas.create(user.id, "an unanalyzed idea");
+    const idea = await container.ideas.create(user.id, "an unanalyzed idea");
 
     await expect(container.ideaPipeline.draftForExistingIdea(user.id, idea.id)).rejects.toThrow(NotFoundError);
   });
 
   it("forces a draft for an idea previously marked not worth developing", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
     ai.queueJSON(NOT_WORTH);
@@ -133,11 +133,11 @@ describe("IdeaPipelineService", () => {
     const forced = await container.ideaPipeline.draftForExistingIdea(user.id, captured.idea.id);
 
     expect(forced.draft?.content).toBe("A forced draft anyway.");
-    expect(container.ideas.getById(captured.idea.id)?.status).toBe("drafted");
+    expect((await container.ideas.getById(captured.idea.id))?.status).toBe("drafted");
   });
 
   it("rewrites a draft using feedback and increments the version", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
     ai.queueJSON(WORTH_NO_RESEARCH);
@@ -153,7 +153,7 @@ describe("IdeaPipelineService", () => {
   });
 
   it("throws NotFoundError when rewriting an idea with no existing draft", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
     ai.queueJSON(NOT_WORTH);
     const captured = await container.ideaPipeline.captureAndProcess(user.id, "no draft yet");
@@ -164,7 +164,7 @@ describe("IdeaPipelineService", () => {
   });
 
   it("rejects empty rewrite feedback", async () => {
-    const user = container.users.getOrCreate("chat-1");
+    const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
     ai.queueJSON(WORTH_NO_RESEARCH);
     ai.queueText("Draft.");

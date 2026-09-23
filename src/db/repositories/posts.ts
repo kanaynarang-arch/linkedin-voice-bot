@@ -1,60 +1,60 @@
-import type { DB } from "../client.js";
+import type { Database } from "../client.js";
 import type { LinkedInPostRecord } from "../../domain/types.js";
+import { toIsoString } from "../rows.js";
 
 interface PostRow {
   id: number;
   user_id: number;
   content: string;
-  created_at: string;
+  created_at: string | Date;
 }
 
 function toRecord(row: PostRow): LinkedInPostRecord {
-  return { id: row.id, userId: row.user_id, content: row.content, createdAt: row.created_at };
+  return { id: row.id, userId: row.user_id, content: row.content, createdAt: toIsoString(row.created_at) };
 }
 
 export class PostsRepository {
-  constructor(private readonly db: DB) {}
+  constructor(private readonly db: Database) {}
 
-  add(userId: number, content: string): LinkedInPostRecord {
-    const result = this.db
-      .prepare<[number, string]>("INSERT INTO linkedin_posts (user_id, content) VALUES (?, ?)")
-      .run(userId, content);
-    const row = this.db
-      .prepare<[number], PostRow>("SELECT * FROM linkedin_posts WHERE id = ?")
-      .get(Number(result.lastInsertRowid));
+  async add(userId: number, content: string): Promise<LinkedInPostRecord> {
+    const rows = await this.db.query<PostRow>(
+      "INSERT INTO linkedin_posts (user_id, content) VALUES ($1, $2) RETURNING *",
+      [userId, content],
+    );
+    const row = rows[0];
     if (!row) throw new Error("Failed to create post record");
     return toRecord(row);
   }
 
-  addMany(userId: number, contents: string[]): LinkedInPostRecord[] {
-    const insert = this.db.transaction((items: string[]) => {
-      return items.map((c) => this.add(userId, c));
-    });
-    return insert(contents);
+  async addMany(userId: number, contents: string[]): Promise<LinkedInPostRecord[]> {
+    const results: LinkedInPostRecord[] = [];
+    for (const content of contents) {
+      results.push(await this.add(userId, content));
+    }
+    return results;
   }
 
-  listByUser(userId: number): LinkedInPostRecord[] {
-    const rows = this.db
-      .prepare<[number], PostRow>(
-        "SELECT * FROM linkedin_posts WHERE user_id = ? ORDER BY created_at ASC",
-      )
-      .all(userId);
+  async listByUser(userId: number): Promise<LinkedInPostRecord[]> {
+    const rows = await this.db.query<PostRow>(
+      "SELECT * FROM linkedin_posts WHERE user_id = $1 ORDER BY created_at ASC",
+      [userId],
+    );
     return rows.map(toRecord);
   }
 
-  countByUser(userId: number): number {
-    const row = this.db
-      .prepare<[number], { count: number }>(
-        "SELECT COUNT(*) as count FROM linkedin_posts WHERE user_id = ?",
-      )
-      .get(userId);
-    return row?.count ?? 0;
+  async countByUser(userId: number): Promise<number> {
+    const rows = await this.db.query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM linkedin_posts WHERE user_id = $1",
+      [userId],
+    );
+    return Number(rows[0]?.count ?? 0);
   }
 
-  clearByUser(userId: number): number {
-    const result = this.db
-      .prepare<[number]>("DELETE FROM linkedin_posts WHERE user_id = ?")
-      .run(userId);
-    return result.changes;
+  async clearByUser(userId: number): Promise<number> {
+    const rows = await this.db.query<PostRow>(
+      "DELETE FROM linkedin_posts WHERE user_id = $1 RETURNING id",
+      [userId],
+    );
+    return rows.length;
   }
 }

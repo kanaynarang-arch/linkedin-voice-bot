@@ -6,7 +6,7 @@ function truncate(s: string, n: number): string {
 }
 
 export async function handlePosts(ctx: BotContext): Promise<void> {
-  const posts = ctx.container.posts.listByUser(ctx.appUserId);
+  const posts = await ctx.container.posts.listByUser(ctx.appUserId);
   if (posts.length === 0) {
     await ctx.reply("You haven't added any LinkedIn posts yet. Send /addposts to start.");
     return;
@@ -29,6 +29,6 @@ export async function handleClearPosts(ctx: BotContext, args: string): Promise<v
     );
     return;
   }
-  const removed = ctx.container.posts.clearByUser(ctx.appUserId);
+  const removed = await ctx.container.posts.clearByUser(ctx.appUserId);
   await ctx.reply(`Deleted ${removed} post(s).`);
 }

@@ -1,4 +1,7 @@
-import { openDatabase } from "../../src/db/client.js";
+import { newDb } from "pg-mem";
+import type pg from "pg";
+import { wrapPool, type Database } from "../../src/db/client.js";
+import { SCHEMA_SQL } from "../../src/db/schema.js";
 import { buildContainerFromParts, type Container } from "../../src/container.js";
 import { FakeAIProvider } from "./fakeAIProvider.js";
 
@@ -7,9 +10,24 @@ export interface TestSetup {
   ai: FakeAIProvider;
 }
 
-/** Builds a fully wired container backed by an in-memory SQLite DB and a fake AI provider. */
-export function createTestSetup(minPostsForAnalysis = 3): TestSetup {
-  const db = openDatabase(":memory:");
+/**
+ * An in-memory Postgres database (pg-mem, driven through the real `pg`
+ * wire-compatible adapter) with the app schema applied. Repository code
+ * never knows it isn't talking to a real Postgres/Neon instance.
+ */
+export async function createTestDb(): Promise<Database> {
+  const mem = newDb();
+  const { Pool } = mem.adapters.createPg();
+  const pool = new Pool() as unknown as pg.Pool;
+
+  const db = wrapPool(pool);
+  await db.query(SCHEMA_SQL);
+  return db;
+}
+
+/** Builds a fully wired container backed by an in-memory Postgres database and a fake AI provider. */
+export async function createTestSetup(minPostsForAnalysis = 3): Promise<TestSetup> {
+  const db = await createTestDb();
   const ai = new FakeAIProvider();
   const container = buildContainerFromParts(db, ai, minPostsForAnalysis);
   return { container, ai };

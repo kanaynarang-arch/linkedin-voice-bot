@@ -21,7 +21,7 @@ export function accessControl(container: Container, allowedChatId: string): Midd
     }
 
     ctx.container = container;
-    ctx.appUserId = container.users.getOrCreate(String(chatId)).id;
+    ctx.appUserId = (await container.users.getOrCreate(String(chatId))).id;
     return next();
   };
 }

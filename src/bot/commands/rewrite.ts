@@ -13,7 +13,7 @@ export async function handleRewrite(ctx: BotContext, args: string): Promise<void
   let feedback = trimmed;
 
   if (maybeId && /^\d+$/.test(maybeId)) {
-    const candidate = ctx.container.ideas.getById(Number(maybeId));
+    const candidate = await ctx.container.ideas.getById(Number(maybeId));
     if (candidate && candidate.userId === ctx.appUserId) {
       ideaId = candidate.id;
       feedback = rest.join(" ");
@@ -21,7 +21,7 @@ export async function handleRewrite(ctx: BotContext, args: string): Promise<void
   }
 
   if (ideaId === null) {
-    const latest = ctx.container.ideas.getLatestByUser(ctx.appUserId);
+    const latest = await ctx.container.ideas.getLatestByUser(ctx.appUserId);
     if (!latest) {
       await ctx.reply("No ideas yet to rewrite. Send me a thought first.");
       return;

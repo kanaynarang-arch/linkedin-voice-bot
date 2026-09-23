@@ -14,7 +14,7 @@ export async function handleWrite(ctx: BotContext, args: string): Promise<void> 
     }
     ideaId = parsed;
   } else {
-    const latest = ctx.container.ideas.getLatestByUser(ctx.appUserId);
+    const latest = await ctx.container.ideas.getLatestByUser(ctx.appUserId);
     if (!latest) {
       await ctx.reply("You don't have any captured ideas yet. Send me a thought first.");
       return;

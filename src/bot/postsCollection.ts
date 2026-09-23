@@ -4,7 +4,7 @@ import { replyLong } from "./reply.js";
 const SEPARATOR_PATTERN = /^\s*-{3,}\s*$/m;
 
 export async function startCollectingPosts(ctx: BotContext): Promise<void> {
-  ctx.container.conversationState.set(ctx.appUserId, "collecting_posts", { addedCount: 0 });
+  await ctx.container.conversationState.set(ctx.appUserId, "collecting_posts", { addedCount: 0 });
   await replyLong(
     ctx,
     [
@@ -26,16 +26,16 @@ export async function handlePostsCollectionMessage(ctx: BotContext, text: string
     return;
   }
 
-  ctx.container.posts.addMany(ctx.appUserId, parts);
-  const total = ctx.container.posts.countByUser(ctx.appUserId);
+  await ctx.container.posts.addMany(ctx.appUserId, parts);
+  const total = await ctx.container.posts.countByUser(ctx.appUserId);
   await ctx.reply(
     `Added ${parts.length} post${parts.length === 1 ? "" : "s"} (${total} total stored). Send more, or /done when finished.`,
   );
 }
 
 export async function finishCollectingPosts(ctx: BotContext): Promise<void> {
-  ctx.container.conversationState.reset(ctx.appUserId);
-  const total = ctx.container.posts.countByUser(ctx.appUserId);
+  await ctx.container.conversationState.reset(ctx.appUserId);
+  const total = await ctx.container.posts.countByUser(ctx.appUserId);
   const min = ctx.container.minPostsForAnalysis;
   const nextStep =
     total >= min
@@ -45,6 +45,6 @@ export async function finishCollectingPosts(ctx: BotContext): Promise<void> {
 }
 
 export async function cancelCollectingPosts(ctx: BotContext): Promise<void> {
-  ctx.container.conversationState.reset(ctx.appUserId);
+  await ctx.container.conversationState.reset(ctx.appUserId);
   await ctx.reply("Stopped collecting posts. Anything already added this session is still saved.");
 }

@@ -6,7 +6,7 @@ function truncate(s: string, n: number): string {
 }
 
 export async function handleIdeas(ctx: BotContext): Promise<void> {
-  const ideas = ctx.container.ideas.listByUser(ctx.appUserId, 15);
+  const ideas = await ctx.container.ideas.listByUser(ctx.appUserId, 15);
   if (ideas.length === 0) {
     await ctx.reply("No ideas captured yet. Just send me a thought and I'll take it from there.");
     return;

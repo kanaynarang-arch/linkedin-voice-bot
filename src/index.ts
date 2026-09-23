@@ -9,7 +9,7 @@ async function main(): Promise<void> {
   const env = loadEnv();
   setLogLevel(env.LOG_LEVEL);
 
-  const container = buildContainer(env);
+  const container = await buildContainer(env);
   const bot = createBot(env.TELEGRAM_BOT_TOKEN, container, env.TELEGRAM_CHAT_ID);
 
   process.once("SIGINT", () => {
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
   });
 
   await bot.launch(() => {
-    log.info("Bot started", { model: env.GEMINI_MODEL, database: env.DATABASE_PATH });
+    log.info("Bot started in local polling mode", { model: env.GEMINI_MODEL });
   });
 }
 

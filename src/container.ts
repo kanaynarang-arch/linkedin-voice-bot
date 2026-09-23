@@ -1,5 +1,5 @@
 import type { Env } from "./config/env.js";
-import { openDatabase, type DB } from "./db/client.js";
+import { openDatabase, type Database } from "./db/client.js";
 import { UsersRepository } from "./db/repositories/users.js";
 import { PostsRepository } from "./db/repositories/posts.js";
 import { VoiceProfilesRepository } from "./db/repositories/voiceProfiles.js";
@@ -13,7 +13,7 @@ import { VoiceProfileService } from "./domain/voiceProfileService.js";
 import { IdeaPipelineService } from "./domain/ideaPipeline.js";
 
 export interface Container {
-  db: DB;
+  db: Database;
   ai: AIProvider & ResearchProvider;
   minPostsForAnalysis: number;
   users: UsersRepository;
@@ -28,19 +28,19 @@ export interface Container {
 }
 
 /** Builds all repositories and services from a validated Env. One place to wire the app. */
-export function buildContainer(env: Env): Container {
-  const db = openDatabase(env.DATABASE_PATH);
+export async function buildContainer(env: Env): Promise<Container> {
+  const db = await openDatabase(env.DATABASE_URL);
   const ai = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL });
   return buildContainerFromParts(db, ai, env.MIN_POSTS_FOR_ANALYSIS);
 }
 
 /**
  * Wires the container from already-constructed pieces. Used directly by
- * tests so they can pass an in-memory DB and a fake AI provider without
- * needing real credentials.
+ * tests so they can pass an in-memory (pg-mem) database and a fake AI
+ * provider without needing real credentials.
  */
 export function buildContainerFromParts(
-  db: DB,
+  db: Database,
   ai: AIProvider & ResearchProvider,
   minPostsForAnalysis: number,
 ): Container {

@@ -1,5 +1,6 @@
-import type { DB } from "../client.js";
+import type { Database } from "../client.js";
 import type { DraftRecord } from "../../domain/types.js";
+import { toIsoString } from "../rows.js";
 
 interface DraftRow {
   id: number;
@@ -9,7 +10,7 @@ interface DraftRow {
   version: number;
   feedback: string | null;
   model: string;
-  created_at: string;
+  created_at: string | Date;
 }
 
 function toRecord(row: DraftRow): DraftRecord {
@@ -21,45 +22,44 @@ function toRecord(row: DraftRow): DraftRecord {
     version: row.version,
     feedback: row.feedback,
     model: row.model,
-    createdAt: row.created_at,
+    createdAt: toIsoString(row.created_at),
   };
 }
 
 export class DraftsRepository {
-  constructor(private readonly db: DB) {}
+  constructor(private readonly db: Database) {}
 
-  create(
+  async create(
     ideaId: number,
     analysisId: number,
     content: string,
     model: string,
     feedback: string | null = null,
-  ): DraftRecord {
-    const previousVersion = this.getLatestForIdea(ideaId)?.version ?? 0;
-    const result = this.db
-      .prepare<[number, number, string, number, string | null, string]>(
-        `INSERT INTO drafts (idea_id, analysis_id, content, version, feedback, model)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(ideaId, analysisId, content, previousVersion + 1, feedback, model);
-    const row = this.db
-      .prepare<[number], DraftRow>("SELECT * FROM drafts WHERE id = ?")
-      .get(Number(result.lastInsertRowid));
+  ): Promise<DraftRecord> {
+    const previous = await this.getLatestForIdea(ideaId);
+    const nextVersion = (previous?.version ?? 0) + 1;
+
+    const rows = await this.db.query<DraftRow>(
+      `INSERT INTO drafts (idea_id, analysis_id, content, version, feedback, model)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+      [ideaId, analysisId, content, nextVersion, feedback, model],
+    );
+    const row = rows[0];
     if (!row) throw new Error("Failed to create draft record");
     return toRecord(row);
   }
 
-  getLatestForIdea(ideaId: number): DraftRecord | null {
-    const row = this.db
-      .prepare<[number], DraftRow>(
-        "SELECT * FROM drafts WHERE idea_id = ? ORDER BY version DESC LIMIT 1",
-      )
-      .get(ideaId);
-    return row ? toRecord(row) : null;
+  async getLatestForIdea(ideaId: number): Promise<DraftRecord | null> {
+    const rows = await this.db.query<DraftRow>(
+      "SELECT * FROM drafts WHERE idea_id = $1 ORDER BY version DESC LIMIT 1",
+      [ideaId],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 
-  getById(id: number): DraftRecord | null {
-    const row = this.db.prepare<[number], DraftRow>("SELECT * FROM drafts WHERE id = ?").get(id);
-    return row ? toRecord(row) : null;
+  async getById(id: number): Promise<DraftRecord | null> {
+    const rows = await this.db.query<DraftRow>("SELECT * FROM drafts WHERE id = $1", [id]);
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 }

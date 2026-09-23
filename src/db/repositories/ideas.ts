@@ -1,12 +1,13 @@
-import type { DB } from "../client.js";
+import type { Database } from "../client.js";
 import type { IdeaRecord, IdeaStatus } from "../../domain/types.js";
+import { toIsoString } from "../rows.js";
 
 interface IdeaRow {
   id: number;
   user_id: number;
   raw_text: string;
   status: IdeaStatus;
-  created_at: string;
+  created_at: string | Date;
 }
 
 function toRecord(row: IdeaRow): IdeaRecord {
@@ -15,60 +16,54 @@ function toRecord(row: IdeaRow): IdeaRecord {
     userId: row.user_id,
     rawText: row.raw_text,
     status: row.status,
-    createdAt: row.created_at,
+    createdAt: toIsoString(row.created_at),
   };
 }
 
 export class IdeasRepository {
-  constructor(private readonly db: DB) {}
+  constructor(private readonly db: Database) {}
 
-  create(userId: number, rawText: string): IdeaRecord {
-    const result = this.db
-      .prepare<[number, string]>("INSERT INTO ideas (user_id, raw_text) VALUES (?, ?)")
-      .run(userId, rawText);
-    const row = this.db
-      .prepare<[number], IdeaRow>("SELECT * FROM ideas WHERE id = ?")
-      .get(Number(result.lastInsertRowid));
+  async create(userId: number, rawText: string): Promise<IdeaRecord> {
+    const rows = await this.db.query<IdeaRow>(
+      "INSERT INTO ideas (user_id, raw_text) VALUES ($1, $2) RETURNING *",
+      [userId, rawText],
+    );
+    const row = rows[0];
     if (!row) throw new Error("Failed to create idea record");
     return toRecord(row);
   }
 
-  setStatus(ideaId: number, status: IdeaStatus): void {
-    this.db.prepare<[string, number]>("UPDATE ideas SET status = ? WHERE id = ?").run(status, ideaId);
+  async setStatus(ideaId: number, status: IdeaStatus): Promise<void> {
+    await this.db.query("UPDATE ideas SET status = $1 WHERE id = $2", [status, ideaId]);
   }
 
-  getById(ideaId: number): IdeaRecord | null {
-    const row = this.db
-      .prepare<[number], IdeaRow>("SELECT * FROM ideas WHERE id = ?")
-      .get(ideaId);
-    return row ? toRecord(row) : null;
+  async getById(ideaId: number): Promise<IdeaRecord | null> {
+    const rows = await this.db.query<IdeaRow>("SELECT * FROM ideas WHERE id = $1", [ideaId]);
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 
   /** Finds an idea by exact raw text for this user, to detect duplicate submissions. */
-  findDuplicate(userId: number, rawText: string): IdeaRecord | null {
-    const row = this.db
-      .prepare<[number, string], IdeaRow>(
-        "SELECT * FROM ideas WHERE user_id = ? AND raw_text = ? ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(userId, rawText);
-    return row ? toRecord(row) : null;
+  async findDuplicate(userId: number, rawText: string): Promise<IdeaRecord | null> {
+    const rows = await this.db.query<IdeaRow>(
+      "SELECT * FROM ideas WHERE user_id = $1 AND raw_text = $2 ORDER BY created_at DESC LIMIT 1",
+      [userId, rawText],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 
-  listByUser(userId: number, limit = 20): IdeaRecord[] {
-    const rows = this.db
-      .prepare<[number, number], IdeaRow>(
-        "SELECT * FROM ideas WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-      )
-      .all(userId, limit);
+  async listByUser(userId: number, limit = 20): Promise<IdeaRecord[]> {
+    const rows = await this.db.query<IdeaRow>(
+      "SELECT * FROM ideas WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+      [userId, limit],
+    );
     return rows.map(toRecord);
   }
 
-  getLatestByUser(userId: number): IdeaRecord | null {
-    const row = this.db
-      .prepare<[number], IdeaRow>(
-        "SELECT * FROM ideas WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(userId);
-    return row ? toRecord(row) : null;
+  async getLatestByUser(userId: number): Promise<IdeaRecord | null> {
+    const rows = await this.db.query<IdeaRow>(
+      "SELECT * FROM ideas WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1",
+      [userId],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 }

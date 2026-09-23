@@ -6,9 +6,12 @@ const envSchema = z.object({
   TELEGRAM_CHAT_ID: z.string().min(1, "TELEGRAM_CHAT_ID is required"),
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
   GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
-  DATABASE_PATH: z.string().default("./data/bot.db"),
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required (a Postgres connection string)"),
   MIN_POSTS_FOR_ANALYSIS: z.coerce.number().int().positive().default(5),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  // Only needed to run scripts/setWebhook.ts or when serving the webhook function.
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
+  PUBLIC_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
