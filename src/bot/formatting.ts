@@ -1,4 +1,4 @@
-import type { IdeaPipelineResult } from "../domain/ideaPipeline.js";
+import type { IdeaPipelineResult, NewsStatus } from "../domain/ideaPipeline.js";
 import type { IndustryHook, VoiceProfile } from "../domain/types.js";
 import { formatDate } from "./telegramUtils.js";
 
@@ -22,6 +22,28 @@ function formatNewsSourceBlock(hook: IndustryHook): string {
   ].join("\n");
 }
 
+/**
+ * A one-line, always-shown summary of what the Google News step actually
+ * did - distinct from the NEWS SOURCE block, which only appears when a
+ * hook was found AND used. Without this, "nothing relevant found",
+ * "found but didn't fit", and "the lookup failed" were all indistinguishable
+ * from Telegram alone (all three just show no source block).
+ */
+function formatNewsStatusLine(newsStatus: NewsStatus, usedNewsHook: boolean): string {
+  switch (newsStatus) {
+    case "relevant_hook_found":
+      return usedNewsHook
+        ? "NEWS: found and used"
+        : "NEWS: found a candidate, but it didn't fit - drafted without it";
+    case "no_relevant_hook":
+      return "NEWS: nothing relevant found";
+    case "retrieval_failure":
+      return "NEWS: lookup failed - drafted without it";
+    case "not_searched":
+      return "NEWS: not searched";
+  }
+}
+
 /** Renders a completed idea-pipeline run: score, gate decision, and (if it passed) the draft. */
 export function formatPipelineResult(result: IdeaPipelineResult): string {
   const scoreLine = `SCORE: ${result.score.linkedinScore.toFixed(1)}/10.0`;
@@ -42,6 +64,7 @@ export function formatPipelineResult(result: IdeaPipelineResult): string {
   const lines: string[] = [scoreLine, "", "DECISION: Worth developing"];
 
   if (result.draft) {
+    lines.push("", formatNewsStatusLine(result.newsStatus, result.draft.usedNewsHook));
     lines.push("", "DRAFT", result.draft.content);
 
     if (result.draft.usedNewsHook && result.draft.newsHook) {

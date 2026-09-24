@@ -144,6 +144,49 @@ describe("formatPipelineResult", () => {
     expect(output).not.toContain("NEWS SOURCE");
   });
 
+  describe("NEWS status line", () => {
+    it("distinguishes found-and-used from the other three states, which otherwise look identical", () => {
+      const used = formatPipelineResult(
+        baseResult({
+          newsStatus: "relevant_hook_found",
+          newsHook: baseHook(),
+          draft: baseDraft({ newsHook: baseHook(), usedNewsHook: true }),
+        }),
+      );
+      const foundButUnused = formatPipelineResult(
+        baseResult({
+          newsStatus: "relevant_hook_found",
+          newsHook: baseHook(),
+          draft: baseDraft({ newsHook: baseHook(), usedNewsHook: false }),
+        }),
+      );
+      const noneFound = formatPipelineResult(
+        baseResult({ newsStatus: "no_relevant_hook", draft: baseDraft({ usedNewsHook: false }) }),
+      );
+      const failed = formatPipelineResult(
+        baseResult({ newsStatus: "retrieval_failure", draft: baseDraft({ usedNewsHook: false }) }),
+      );
+
+      expect(used).toContain("NEWS: found and used");
+      expect(foundButUnused).toContain("NEWS: found a candidate, but it didn't fit");
+      expect(noneFound).toContain("NEWS: nothing relevant found");
+      expect(failed).toContain("NEWS: lookup failed");
+
+      // All four are distinguishable from each other - none share the same NEWS line.
+      const lines = [used, foundButUnused, noneFound, failed].map(
+        (output) => output.split("\n").find((line) => line.startsWith("NEWS:")),
+      );
+      expect(new Set(lines).size).toBe(4);
+    });
+
+    it("does not show a NEWS line for a rejected idea (no draft to attach it to)", () => {
+      const output = formatPipelineResult(
+        baseResult({ passed: false, newsStatus: "not_searched", draft: null }),
+      );
+      expect(output).not.toContain("NEWS:");
+    });
+  });
+
   it("mentions /approve and /reject in the review prompt for a drafted idea", () => {
     const output = formatPipelineResult(baseResult());
     expect(output).toContain("/approve 1");
