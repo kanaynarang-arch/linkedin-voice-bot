@@ -4,10 +4,11 @@ import { formatDate } from "./telegramUtils.js";
 
 /**
  * The mandatory NEWS SOURCE / verify block (section 34 of the audit spec).
- * Shown ONLY when a draft actually incorporated the selected hook - never
- * just because a hook was retrieved - and Meera is explicitly told to
- * verify it herself before publishing; a qualifying article is context,
- * not proof of her claim.
+ * Shown when a draft incorporated the selected hook - using a hook is now
+ * mandatory whenever one qualifies (ideaPipeline.ts), so in practice this
+ * shows whenever `newsStatus` is "relevant_hook_found" - and Meera is
+ * explicitly told to verify it herself before publishing; a qualifying
+ * article is context, not proof of her claim.
  */
 function formatNewsSourceBlock(hook: IndustryHook): string {
   const date = hook.publishedAt ? formatDate(hook.publishedAt) : "date unknown";
@@ -25,9 +26,12 @@ function formatNewsSourceBlock(hook: IndustryHook): string {
 /**
  * A one-line, always-shown summary of what the Google News step actually
  * did - distinct from the NEWS SOURCE block, which only appears when a
- * hook was found AND used. Without this, "nothing relevant found",
- * "found but didn't fit", and "the lookup failed" were all indistinguishable
- * from Telegram alone (all three just show no source block).
+ * hook was found. Without this, "nothing relevant found" and "the lookup
+ * failed" were indistinguishable from Telegram alone (both just show no
+ * source block). The "found but not used" case is kept for defensive
+ * completeness even though using a qualifying hook is now mandatory
+ * (ideaPipeline.ts always sets usedNewsHook = Boolean(newsHook)), so it
+ * shouldn't currently be reachable in practice.
  */
 function formatNewsStatusLine(newsStatus: NewsStatus, usedNewsHook: boolean): string {
   switch (newsStatus) {

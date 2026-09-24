@@ -219,18 +219,14 @@ export type IndustryHookResult =
   | { status: "no_relevant_hook"; hooks: [] };
 
 /**
- * Gemini drafting call output. `usedNewsHook` is the model's own signal
- * for whether it actually incorporated the offered news hook into the
- * post text - the Telegram NEWS SOURCE/verify block (section 34) is only
- * ever shown when this is true, never just because a hook was available.
+ * Gemini drafting call output. Incorporating the offered news hook (when
+ * one is provided) is mandatory, not the model's choice - so unlike the
+ * scoring/evaluation schemas, there's no self-reported "did I use it"
+ * field here. Whether a hook was used is instead derived deterministically
+ * in code (ideaPipeline.ts) from whether one was provided at all.
  */
 export const DraftResponseSchema = z.object({
   draft: z.string().min(1).describe("The finished LinkedIn post, ready for human review."),
-  usedNewsHook: z
-    .boolean()
-    .describe(
-      "true only if a news hook was provided AND the post actually references/incorporates it. false if no hook was provided, or one was provided but didn't genuinely fit and was left out.",
-    ),
 });
 export type DraftResponse = z.infer<typeof DraftResponseSchema>;
 

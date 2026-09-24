@@ -5,7 +5,7 @@ import { formatVoiceProfileForPrompt } from "./formatVoiceProfile.js";
 export interface DraftGenerationInput {
   rawIdea: string;
   voiceProfile: VoiceProfile;
-  /** The single strongest Google News RSS hook found for this idea, if any - never forced, see BASE_RULES. */
+  /** The single strongest Google News RSS hook found for this idea, if any - mandatory to incorporate when present, see BASE_RULES. */
   newsHook: IndustryHook | null;
   recentPostExcerpts: string[];
   /** When set, this is a rewrite: the previous draft plus the author's feedback on it. */
@@ -13,22 +13,21 @@ export interface DraftGenerationInput {
 }
 
 const SCHEMA_DESCRIPTION = `{
-  "draft": string (the finished LinkedIn post, ready for human review),
-  "usedNewsHook": boolean (true only if a news hook was provided below AND the post actually references/incorporates it - false if none was provided, or one was provided but didn't genuinely fit and you left it out)
+  "draft": string (the finished LinkedIn post, ready for human review)
 }`;
 
 const BASE_RULES = `You write a single LinkedIn post on behalf of one specific author, using their Voice Profile below. The idea has already been judged worth developing - your job is only to turn it into a post, never to reconsider whether it's good enough. The post must:
 - Preserve the author's underlying idea and intent exactly - do not change what they meant, and do not invent experiences, anecdotes, customers, numbers, or opinions the author did not give you. If the raw note is uncertain, preserve that uncertainty rather than turning speculation into fact.
 - Sound like this author specifically: match their tone, rhythm, vocabulary, structure, and signature patterns from the Voice Profile.
 - Never copy or closely paraphrase sentences from their past posts (shown below only as pattern reference, not content to reuse).
-- Never force a hook, call-to-action, story structure, or news angle if it doesn't genuinely fit this idea - it is better to be shorter and honest than to pad with generic LinkedIn structure.
+- Never force a call-to-action, story structure, or generic LinkedIn framing if it doesn't genuinely fit this idea - it is better to be shorter and honest than to pad with generic structure.
 - Avoid generic AI/LinkedIn language: no "In today's fast-paced world," no "game-changer," no engagement-bait questions, no emoji unless the voice profile's avoidance patterns say the author actually uses them.
-- If a news hook is provided below and it genuinely strengthens the point, you may incorporate it briefly and attribute it naturally (e.g. "a recent report found..."); an article is external context, not proof of the author's claim - never present it as validating or confirming what the author experienced. Do not force it in if it doesn't fit; it is completely normal and expected to leave it out.
+- If a news hook is provided below, you MUST incorporate it into the post - this has already been selected as the strongest available and confirmed relevant; do not leave it out. Attribute it naturally and honestly (e.g. "a recent report found..."). It is external context, not proof of the author's claim - never present it as validating or confirming what the author personally experienced, and never overstate the connection beyond what's actually described.
 - Output strictly valid JSON matching this shape, no markdown fences, no commentary outside the JSON:
 ${SCHEMA_DESCRIPTION}`;
 
 function formatNewsHook(hook: IndustryHook): string {
-  return `\n\nOPTIONAL NEWS HOOK (use only if it genuinely strengthens the post - do not force it):
+  return `\n\nNEWS HOOK (required - work this into the post naturally):
 Title: ${hook.title}
 Source: ${hook.source ?? "unknown"}${hook.publishedAt ? `\nPublished: ${hook.publishedAt}` : ""}
 Relationship to the idea (${hook.connectionType}): ${hook.hookConnection}`;

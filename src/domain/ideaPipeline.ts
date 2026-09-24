@@ -250,9 +250,10 @@ export class IdeaPipelineService {
     });
 
     const response = await generateValidatedJSON(this.ai, DraftResponseSchema, systemInstruction, prompt);
-    // The model's own signal for whether it actually used the hook - never
-    // shown as "used" just because a hook happened to be available.
-    const usedNewsHook = Boolean(params.newsHook) && response.usedNewsHook;
+    // Using the hook is mandatory (enforced by the prompt), not the
+    // model's choice - so this is derived from whether one was offered at
+    // all, not from any self-reported signal.
+    const usedNewsHook = Boolean(params.newsHook);
 
     return this.drafts.create(
       params.idea.id,

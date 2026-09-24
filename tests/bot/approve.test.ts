@@ -9,7 +9,7 @@ const SIMPLE_PLAN = {
 };
 
 function draftResponse(text: string) {
-  return { draft: text, usedNewsHook: false };
+  return { draft: text };
 }
 
 async function captureADraft(container: import("../../src/container.js").Container, ai: import("../testUtils/fakeAIProvider.js").FakeAIProvider, userId: number, text: string) {

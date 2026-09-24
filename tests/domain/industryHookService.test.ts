@@ -226,6 +226,56 @@ describe("IndustryHookService.findHooks", () => {
     expect(result.hooks.every((h) => h.canonicalUrl === null)).toBe(true);
   });
 
+  it("prefers a more recent hook over a stronger-but-older one - recency ranks ahead of hookStrength", async () => {
+    const ai = new FakeAIProvider();
+    const newsClient = new FakeGoogleNewsClient();
+    const service = new IndustryHookService(ai, newsClient);
+
+    const oldDate = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString(); // OLDER
+    const recentDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(); // CURRENT
+
+    ai.queueJSON(plan([{ query: "q1", concept: "a", pass: 1 }]));
+    newsClient.queueResult("q1", [
+      sampleCandidate({
+        title: "Old but strong",
+        googleNewsUrl: "https://news.google.com/rss/articles/1",
+        publishedAt: oldDate,
+      }),
+      sampleCandidate({
+        title: "Recent but weaker",
+        googleNewsUrl: "https://news.google.com/rss/articles/2",
+        publishedAt: recentDate,
+      }),
+    ]);
+    // "Old but strong" scores higher on relevance, but should still rank
+    // second: when nothing is within 30 days elsewhere, the most recent
+    // qualifying candidate should be preferred over a purely stronger one.
+    ai.queueJSON(evaluation([qualifyingItem(0, 9.5), qualifyingItem(1, 6.5)]));
+
+    const result = await service.findHooks(RAW_THOUGHT);
+    expect(result.hooks.map((h) => h.title)).toEqual(["Recent but weaker", "Old but strong"]);
+    expect(result.hooks[0]?.recency).toBe("CURRENT");
+    expect(result.hooks[1]?.recency).toBe("OLDER");
+  });
+
+  it("still breaks ties by hookStrength when candidates are equally recent", async () => {
+    const ai = new FakeAIProvider();
+    const newsClient = new FakeGoogleNewsClient();
+    const service = new IndustryHookService(ai, newsClient);
+
+    const sameDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+
+    ai.queueJSON(plan([{ query: "q1", concept: "a", pass: 1 }]));
+    newsClient.queueResult("q1", [
+      sampleCandidate({ title: "Weaker", googleNewsUrl: "https://news.google.com/rss/articles/1", publishedAt: sameDate }),
+      sampleCandidate({ title: "Stronger", googleNewsUrl: "https://news.google.com/rss/articles/2", publishedAt: sameDate }),
+    ]);
+    ai.queueJSON(evaluation([qualifyingItem(0, 6.5), qualifyingItem(1, 9.0)]));
+
+    const result = await service.findHooks(RAW_THOUGHT);
+    expect(result.hooks.map((h) => h.title)).toEqual(["Stronger", "Weaker"]);
+  });
+
   it("caps results at MAX_HOOKS, keeping the strongest", async () => {
     const ai = new FakeAIProvider();
     const newsClient = new FakeGoogleNewsClient();

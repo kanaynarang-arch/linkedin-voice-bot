@@ -25,8 +25,8 @@ const SIMPLE_PLAN = {
   queries: [{ query: "cosmetic preservative supplier change", concept: "preservative systems", pass: 1 }],
 };
 
-function draftResponse(text: string, usedNewsHook = false) {
-  return { draft: text, usedNewsHook };
+function draftResponse(text: string) {
+  return { draft: text };
 }
 
 function qualifyingEvaluation(candidateIndex = 0, hookStrength = 7.5) {
@@ -113,7 +113,7 @@ describe("IdeaPipelineService", () => {
     ai.queueJSON(SIMPLE_PLAN);
     newsClient.queueResult(SIMPLE_PLAN.queries[0]!.query, [sampleCandidate()]);
     ai.queueJSON(qualifyingEvaluation());
-    ai.queueJSON(draftResponse("A draft that references the recent industry news.", true));
+    ai.queueJSON(draftResponse("A draft that references the recent industry news."));
 
     const result = await container.ideaPipeline.captureAndProcess(user.id, "Supplier changed the blend.");
 
@@ -123,7 +123,7 @@ describe("IdeaPipelineService", () => {
     expect(result.draft?.usedNewsHook).toBe(true);
   });
 
-  it("finds a relevant hook but does not show it as used when the draft doesn't incorporate it", async () => {
+  it("marks the hook as used whenever one was found - using it is mandatory, not the model's choice", async () => {
     const user = await container.users.getOrCreate("chat-1");
     await withVoiceProfile(container, ai, user.id);
 
@@ -131,13 +131,15 @@ describe("IdeaPipelineService", () => {
     ai.queueJSON(SIMPLE_PLAN);
     newsClient.queueResult(SIMPLE_PLAN.queries[0]!.query, [sampleCandidate()]);
     ai.queueJSON(qualifyingEvaluation());
-    ai.queueJSON(draftResponse("A draft that didn't end up needing the news.", false));
+    // The drafting response no longer reports whether it used the hook at
+    // all (there's no field for it) - usedNewsHook must still end up true.
+    ai.queueJSON(draftResponse("A draft that incorporates the news hook."));
 
     const result = await container.ideaPipeline.captureAndProcess(user.id, "Supplier changed the blend.");
 
     expect(result.newsStatus).toBe("relevant_hook_found");
     expect(result.draft?.newsHook).not.toBeNull();
-    expect(result.draft?.usedNewsHook).toBe(false);
+    expect(result.draft?.usedNewsHook).toBe(true);
   });
 
   it("drafts without news, not as a pipeline failure, when Google News retrieval fails", async () => {
@@ -203,12 +205,12 @@ describe("IdeaPipelineService", () => {
     ai.queueJSON(SIMPLE_PLAN);
     newsClient.queueResult(SIMPLE_PLAN.queries[0]!.query, [sampleCandidate()]);
     ai.queueJSON(qualifyingEvaluation());
-    ai.queueJSON(draftResponse("First draft version.", true));
+    ai.queueJSON(draftResponse("First draft version."));
     const captured = await container.ideaPipeline.captureAndProcess(user.id, "an idea worth writing");
 
     // Rewriting must not re-run Google News - only one drafting call.
     const newsCallsBefore = newsClient.calls.length;
-    ai.queueJSON(draftResponse("Second, punchier draft version.", true));
+    ai.queueJSON(draftResponse("Second, punchier draft version."));
     const revised = await container.ideaPipeline.rewriteDraft(user.id, captured.idea.id, "make it punchier");
 
     expect(revised.version).toBe(2);

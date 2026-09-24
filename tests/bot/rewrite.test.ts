@@ -9,7 +9,7 @@ const SIMPLE_PLAN = {
 };
 
 function draftResponse(text: string) {
-  return { draft: text, usedNewsHook: false };
+  return { draft: text };
 }
 
 describe("handleRewrite", () => {

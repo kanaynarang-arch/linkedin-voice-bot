@@ -24,6 +24,15 @@ const RETRIEVAL_STOP_THRESHOLD = 6;
 const SEARCH_PASSES = [1, 2, 3] as const;
 
 /**
+ * Ranking prefers the most recent qualifying hook over a stronger-but-older
+ * one: a note about something happening now should be paired with the most
+ * current relevant development available, falling back to whatever is most
+ * recent when nothing is within the last 30 days, rather than picking
+ * purely by relevance score regardless of age.
+ */
+const RECENCY_RANK: Record<HookRecency, number> = { CURRENT: 0, RECENT: 1, OLDER: 2, UNKNOWN: 3 };
+
+/**
  * Deterministic recency classification. `referenceTime` is normally "now",
  * but is threaded through explicitly so tests don't depend on real time
  * passing. UNKNOWN (not OLDER) is used whenever the date can't be trusted -
@@ -193,7 +202,11 @@ export class IndustryHookService {
     }
 
     const ranked = dedupeEvents(hooks)
-      .sort((a, b) => b.hookStrength - a.hookStrength)
+      .sort((a, b) => {
+        const recencyDiff = RECENCY_RANK[a.recency] - RECENCY_RANK[b.recency];
+        if (recencyDiff !== 0) return recencyDiff;
+        return b.hookStrength - a.hookStrength;
+      })
       .slice(0, MAX_HOOKS);
 
     if (ranked.length === 0) {
