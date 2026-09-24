@@ -16,7 +16,10 @@ Runs two ways from the same codebase:
 ```
 Telegram  ->  Content ingestion  ->  Voice analysis  ->  Voice Profile (stored)
                                                               |
-Raw idea  ->  Idea analysis  ->  Current-context research  ->  Draft generation  ->  Telegram (human review)
+Raw note  ->  Gemini scoring (0.0-10.0)  ->  score < 6.0? reject + stop
+                    |
+                    v (score >= 6.0)
+              Google News RSS (optional context)  ->  Gemini drafting  ->  Telegram (Review Gate)
 ```
 
 - **Voice extraction**: send your existing LinkedIn posts with `/addposts`, then
@@ -24,13 +27,29 @@ Raw idea  ->  Idea analysis  ->  Current-context research  ->  Draft generation 
   storytelling patterns, thinking style, signature/avoidance patterns, and a
   ranked "core voice fingerprint" - distinguishing traits that show up in
   nearly every post ("stable") from ones that show up sometimes ("occasional").
-- **Idea capture**: send any raw thought as a normal Telegram message. The bot
-  judges honestly whether it has enough substance for a post, picks the
-  strongest angle if so, optionally pulls in current news/data via Gemini's
-  Google Search grounding when it would genuinely help, and drafts a post in
-  your voice.
+- **Scoring gate**: every raw note is scored by Gemini from 0.0-10.0 across
+  eight LinkedIn-content dimensions (professional relevance, knowledge value,
+  original perspective, dwell/read potential, conversation potential,
+  timeliness, share/save utility, authenticity). Scores below
+  `MIN_CONTENT_SCORE` (default 6.0) are rejected before any news lookup or
+  drafting happens - a weak note never reaches those steps, and a news
+  article can never be used to push a weak note past the gate. This scoring
+  call never sees your Voice Profile: it judges the idea, not the writing.
+- **Google News RSS**: only for notes that pass the gate. Extracts the note's
+  underlying concepts, runs a small set of focused Google News searches, and
+  evaluates candidates using only their RSS metadata (title/description/
+  source/date) - never scraping article pages. At most one qualifying hook
+  (score >= 6.0) is offered to drafting; if nothing is genuinely relevant, the
+  post is drafted without news rather than forcing an unrelated angle.
+- **Drafting**: Gemini turns the raw note into a post using your Voice
+  Profile and, if one was found and genuinely fits, the selected news hook as
+  supporting context - never as proof of your claim. The drafting call cannot
+  reconsider the score; that decision is already made.
 - **Review loop**: every draft is returned as plain text with `/rewrite` to
-  revise with feedback or `/write` to regenerate from scratch.
+  revise with feedback, `/write` to regenerate from scratch (or force a draft
+  on a note the score gate rejected), and `/approve` / `/reject` to record
+  your decision. Nothing is ever published automatically - you always post it
+  yourself.
 
 ## Requirements
 
@@ -113,30 +132,41 @@ Postgres database.
 | `/analyze` | Build (or rebuild) your Voice Profile from stored posts |
 | `/profile` | View your current Voice Profile |
 | `/ideas` | List recently captured ideas and their status |
-| `/write [id]` | Draft a post for an idea (defaults to your most recent; pass an id to force a draft on one marked "not worth developing") |
+| `/write [id]` | Draft a post for an idea (defaults to your most recent; pass an id to force a draft on one the score gate rejected) |
 | `/rewrite [id] <feedback>` | Revise a draft with feedback (defaults to your most recent idea) |
+| `/approve [id]` | Record that you approve a draft (defaults to your most recent draft). Never publishes anything. |
+| `/reject [id]` | Record that you reject a draft (defaults to your most recent draft). It stays saved. |
 
-Anything else you send is treated as a raw content idea.
+Anything else you send is treated as a raw content idea: scored, optionally
+given a news hook, and drafted if it passes the gate.
 
 ## Architecture
 
-- `src/ai/` - provider-agnostic AI interface (`AIProvider`, `ResearchProvider`)
-  plus the Gemini implementation. Swapping models/providers later means
+- `src/ai/` - provider-agnostic AI interface (`AIProvider`) plus the Gemini
+  implementation. Gemini is the only model provider - it performs both the
+  scoring call and the drafting call. Swapping models/providers later means
   writing one new class in this folder; nothing else changes.
-- `src/domain/` - core logic: voice profile extraction, the idea pipeline
-  (evaluate -> research -> draft), and the Voice Profile / idea / draft types.
+- `src/news/` - Google News RSS retrieval: URL building, XML parsing, and a
+  `GoogleNewsClient` interface (with a recency-query-with-fallback
+  implementation) that the domain layer depends on instead of the network
+  directly, so tests never make live requests.
+- `src/domain/` - core logic: voice profile extraction, the LinkedIn content
+  score, the Google News hook-relevance evaluator, the idea pipeline (score ->
+  gate -> news -> draft), and the shared domain types.
 - `src/db/` - Postgres schema and repositories (users, posts, voice profiles,
-  ideas, analyses, drafts, conversation state), behind a small `Database`
-  interface so the app doesn't care whether it's talking to Supabase or a local
-  Postgres.
+  ideas, idea_scores, drafts, conversation state), behind a small `Database`
+  interface so the app doesn't care whether it's talking to Supabase or a
+  local Postgres. Each draft stores its own status (`pending`/`approved`/
+  `rejected`) and, if one was offered, the single news hook it was given.
 - `src/bot/` - Telegraf wiring, commands, message routing, formatting, and
   error/access-control middleware. This is the only layer that knows about
   Telegram.
 - `src/container.ts` - single place that wires repositories, the AI provider,
-  and domain services together.
+  the Google News client, and domain services together.
 - `src/index.ts` - local entrypoint (long-polling), for development.
 - `api/telegram.ts` - Vercel Function entrypoint (webhook), for production.
-- `scripts/migrate.ts` - applies the schema to `DATABASE_URL`.
+- `scripts/migrate.ts` - applies the schema to `DATABASE_URL` (idempotent -
+  safe to re-run, including as an upgrade from the pre-audit schema).
 - `scripts/setWebhook.ts` - registers the Vercel deployment URL with Telegram.
 
 ## Testing
@@ -146,8 +176,13 @@ npm test
 ```
 
 Tests cover Telegram message routing (idea capture, duplicates, unknown
-commands, posts-collection flow), voice profile extraction and storage, idea
-evaluation and drafting (including the research and forced-draft paths), AI
-response validation/repair, and the Postgres repositories - all against a
-fake AI provider and an in-memory Postgres database (pg-mem), so no network
-or credentials are needed to run them.
+commands, posts-collection flow, approve/reject), voice profile extraction
+and storage, the scoring gate (boundary values, malformed/out-of-range AI
+output, voice-profile independence), Google News RSS (URL building, XML
+parsing, recency fallback, staleness detection) and the hook-relevance
+evaluator, the idea pipeline end to end (score -> gate -> news -> draft,
+retrieval-failure handling, forced/rewrite paths), AI response
+validation/repair, Telegram output formatting (including the NEWS SOURCE
+verify block), and the Postgres repositories - all against a fake AI
+provider, a fake Google News client, and an in-memory Postgres database
+(pg-mem), so no network or credentials are needed to run them.

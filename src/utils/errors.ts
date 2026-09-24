@@ -66,6 +66,17 @@ export class ResearchError extends AppError {
   }
 }
 
+/** Thrown when Google News RSS retrieval genuinely fails (network/HTTP/parse) - distinct from a search simply finding nothing. */
+export class NewsRetrievalError extends AppError {
+  constructor(message: string, cause?: unknown) {
+    super(
+      message,
+      "I couldn't retrieve current industry news for this right now. Please try again in a moment.",
+      cause,
+    );
+  }
+}
+
 export class TelegramDeliveryError extends AppError {
   constructor(message: string, cause?: unknown) {
     super(message, "Failed to deliver a message via Telegram.", cause);

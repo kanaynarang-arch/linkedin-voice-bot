@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createTestSetup, sampleVoiceProfilePayload } from "../testUtils/testContainer.js";
+import { createTestSetup, sampleVoiceProfilePayload, samplePassingScoreDimensionsPayload } from "../testUtils/testContainer.js";
 import { createFakeCtx } from "../testUtils/fakeCtx.js";
 import { handleRewrite } from "../../src/bot/commands/rewrite.js";
 
-const WORTH_NO_RESEARCH = {
-  ideaSummary: "Idea summary.",
-  worthDeveloping: true,
-  reasoning: "Specific and concrete enough.",
-  angle: "Direct angle.",
-  researchQueries: [],
+const SIMPLE_PLAN = {
+  concepts: ["preservative systems"],
+  queries: [{ query: "cosmetic preservative supplier change", concept: "preservative systems", pass: 1 }],
 };
+
+function draftResponse(text: string) {
+  return { draft: text, usedNewsHook: false };
+}
 
 describe("handleRewrite", () => {
   it("errors when given an idea id that doesn't exist, instead of silently rewriting the latest idea", async () => {
@@ -19,12 +20,13 @@ describe("handleRewrite", () => {
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(user.id);
 
-    ai.queueJSON(WORTH_NO_RESEARCH);
-    ai.queueText("First draft.");
+    ai.queueJSON(samplePassingScoreDimensionsPayload());
+    ai.queueJSON(SIMPLE_PLAN);
+    ai.queueJSON(draftResponse("First draft."));
     const idea = await container.ideaPipeline.captureAndProcess(user.id, "an idea worth writing");
     expect(idea.draft).not.toBeNull();
 
-    const textCallsBefore = ai.textCalls.length;
+    const jsonCallsBefore = ai.jsonCalls.length;
     const { ctx, replies } = createFakeCtx(container, user.id);
     // 999 doesn't exist - the number could easily be a typo of a real id.
     await handleRewrite(ctx, "999 make it punchier");
@@ -32,7 +34,7 @@ describe("handleRewrite", () => {
     expect(replies[0]).toMatch(/couldn't find idea #999/i);
     // Must not have silently rewritten the latest idea using "999 make it
     // punchier" as the feedback text.
-    expect(ai.textCalls.length).toBe(textCallsBefore);
+    expect(ai.jsonCalls.length).toBe(jsonCallsBefore);
     const latestDraft = await container.drafts.getLatestForIdea(idea.idea.id);
     expect(latestDraft?.content).toBe("First draft.");
   });
@@ -45,8 +47,9 @@ describe("handleRewrite", () => {
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(owner.id);
 
-    ai.queueJSON(WORTH_NO_RESEARCH);
-    ai.queueText("Owner's draft.");
+    ai.queueJSON(samplePassingScoreDimensionsPayload());
+    ai.queueJSON(SIMPLE_PLAN);
+    ai.queueJSON(draftResponse("Owner's draft."));
     const ownerIdea = await container.ideaPipeline.captureAndProcess(owner.id, "owner's idea");
 
     const { ctx, replies } = createFakeCtx(container, other.id);
@@ -62,11 +65,12 @@ describe("handleRewrite", () => {
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(user.id);
 
-    ai.queueJSON(WORTH_NO_RESEARCH);
-    ai.queueText("First draft.");
+    ai.queueJSON(samplePassingScoreDimensionsPayload());
+    ai.queueJSON(SIMPLE_PLAN);
+    ai.queueJSON(draftResponse("First draft."));
     const idea = await container.ideaPipeline.captureAndProcess(user.id, "an idea worth writing");
 
-    ai.queueText("Punchier draft.");
+    ai.queueJSON(draftResponse("Punchier draft."));
     const { ctx, replies } = createFakeCtx(container, user.id);
     await handleRewrite(ctx, "make it punchier");
 

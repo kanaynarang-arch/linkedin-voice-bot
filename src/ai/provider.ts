@@ -1,5 +1,3 @@
-import type { ResearchResult } from "../domain/types.js";
-
 export interface GenerateParams {
   /** High-level instructions the model should always follow (role, constraints). */
   systemInstruction: string;
@@ -9,15 +7,15 @@ export interface GenerateParams {
 
 /**
  * Provider-agnostic interface for the AI backend. Every domain service
- * (voice extraction, idea evaluation, draft generation) depends only on
- * this interface, never on Gemini directly — swapping providers later
- * means writing one new class here, not touching the Telegram layer.
+ * (voice extraction, scoring, Google News relevance evaluation, draft
+ * generation) depends only on this interface, never on Gemini directly —
+ * swapping providers later means writing one new class here, not touching
+ * the Telegram layer. Every call in this app produces structured JSON
+ * (validated against a zod schema by the caller - see structuredOutput.ts),
+ * including the final draft, so this is the only method the interface needs.
  */
 export interface AIProvider {
   readonly modelName: string;
-
-  /** Generates free-form text (used for the final LinkedIn draft). */
-  generateText(params: GenerateParams): Promise<string>;
 
   /**
    * Generates a response the model was instructed to produce as JSON.
@@ -25,14 +23,4 @@ export interface AIProvider {
    * zod. Throws AIResponseParsingError if the output isn't valid JSON.
    */
   generateJSON(params: GenerateParams): Promise<unknown>;
-}
-
-/**
- * Optional capability: looking up current news/data to strengthen a
- * draft. Kept separate from AIProvider because not every provider can
- * do grounded search, and the bot must work (without research) even if
- * this fails or is unavailable.
- */
-export interface ResearchProvider {
-  research(query: string): Promise<ResearchResult>;
 }

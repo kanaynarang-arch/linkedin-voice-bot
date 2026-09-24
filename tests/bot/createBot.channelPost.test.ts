@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import { Telegram } from "telegraf";
 import type { Update } from "telegraf/types";
 import { createBot } from "../../src/bot/index.js";
-import { createTestSetup, sampleVoiceProfilePayload } from "../testUtils/testContainer.js";
+import { createTestSetup, sampleVoiceProfilePayload, sampleWeakScoreDimensionsPayload } from "../testUtils/testContainer.js";
 
 const ALLOWED_CHAT_ID = "-1003992734904";
 
@@ -57,13 +57,7 @@ describe("createBot - channel_post routing", () => {
     await container.posts.add(user.id, "a post");
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(user.id);
-    ai.queueJSON({
-      ideaSummary: "summary",
-      worthDeveloping: false,
-      reasoning: "not enough substance",
-      angle: null,
-      researchQueries: [],
-    });
+    ai.queueJSON(sampleWeakScoreDimensionsPayload());
 
     const bot = createBot("fake-token", container, ALLOWED_CHAT_ID);
 

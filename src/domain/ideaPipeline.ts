@@ -1,21 +1,13 @@
-import type { AIProvider, ResearchProvider } from "../ai/provider.js";
+import type { AIProvider } from "../ai/provider.js";
 import { generateValidatedJSON } from "../ai/structuredOutput.js";
-import { buildIdeaEvaluationPrompt } from "../ai/prompts/ideaEvaluation.js";
 import { buildDraftGenerationPrompt } from "../ai/prompts/draftGeneration.js";
 import type { IdeasRepository } from "../db/repositories/ideas.js";
-import type { AnalysesRepository } from "../db/repositories/analyses.js";
 import type { DraftsRepository } from "../db/repositories/drafts.js";
 import type { PostsRepository } from "../db/repositories/posts.js";
 import type { VoiceProfileService } from "./voiceProfileService.js";
-import {
-  IdeaEvaluationSchema,
-  ResearchResultSchema,
-  type AnalysisRecord,
-  type DraftRecord,
-  type IdeaRecord,
-  type ResearchResult,
-  type VoiceProfile,
-} from "./types.js";
+import type { LinkedinScoreService } from "./linkedinScoreService.js";
+import type { IndustryHookService } from "./industryHookService.js";
+import { DraftResponseSchema, type DraftRecord, type IdeaRecord, type IndustryHook, type LinkedinScoreRecord, type VoiceProfile } from "./types.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -23,28 +15,39 @@ const log = createLogger("idea-pipeline");
 
 const RECENT_POSTS_FOR_REFERENCE = 5;
 
+/** Where a run's Google News step landed - distinct states per the audit spec (section 28). */
+export type NewsStatus = "not_searched" | "no_relevant_hook" | "retrieval_failure" | "relevant_hook_found";
+
 export interface IdeaPipelineResult {
   idea: IdeaRecord;
-  analysis: AnalysisRecord;
-  research: ResearchResult | null;
+  /** Gemini scoring call output (Call 1) - always present, even when the idea was rejected. */
+  score: LinkedinScoreRecord;
+  /** score.linkedinScore >= the configured MIN_CONTENT_SCORE threshold. */
+  passed: boolean;
+  newsStatus: NewsStatus;
+  /** The single selected Google News RSS hook offered to drafting, if any. */
+  newsHook: IndustryHook | null;
+  /** Null only when the idea was rejected by the scoring gate. */
   draft: DraftRecord | null;
 }
 
 /**
- * Orchestrates the full "raw idea -> evaluation -> research -> draft"
- * pipeline described in the product spec. Depends only on interfaces
- * (AIProvider, ResearchProvider) and repositories, so it has no idea it's
- * talking to Telegram or to Gemini specifically.
+ * Orchestrates the required Meera workflow: NOTE -> GEMINI SCORING ->
+ * THRESHOLD -> GOOGLE NEWS RSS -> GEMINI DRAFTING -> TELEGRAM -> REVIEW
+ * GATE. Depends only on interfaces (AIProvider, GoogleNewsClient via
+ * IndustryHookService) and repositories, so it has no idea it's talking
+ * to Telegram or to Gemini/Google News specifically.
  */
 export class IdeaPipelineService {
   constructor(
     private readonly ai: AIProvider,
-    private readonly researchProvider: ResearchProvider,
     private readonly ideas: IdeasRepository,
-    private readonly analyses: AnalysesRepository,
     private readonly drafts: DraftsRepository,
     private readonly posts: PostsRepository,
     private readonly voiceProfiles: VoiceProfileService,
+    private readonly linkedinScores: LinkedinScoreService,
+    private readonly industryHooks: IndustryHookService,
+    private readonly minContentScore: number,
   ) {}
 
   /** Looks for an identical idea already captured for this user, to catch duplicate sends. */
@@ -54,7 +57,13 @@ export class IdeaPipelineService {
     return this.ideas.findDuplicate(userId, trimmed);
   }
 
-  /** Full pipeline: capture a new idea, evaluate it, research if useful, and draft if worth it. */
+  /**
+   * Full pipeline. The scoring gate is enforced by construction, not by
+   * convention: Google News and drafting are only ever reached from
+   * inside the `if (score.linkedinScore >= this.minContentScore)` branch
+   * below - a rejected or failed score can't accidentally fall through to
+   * either.
+   */
   async captureAndProcess(userId: number, rawText: string): Promise<IdeaPipelineResult> {
     const trimmed = rawText.trim();
     if (!trimmed) {
@@ -67,87 +76,87 @@ export class IdeaPipelineService {
     const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
     const idea = await this.ideas.create(userId, trimmed);
 
-    const evaluationPrompt = buildIdeaEvaluationPrompt(trimmed, voiceProfile.profile);
-    const evaluation = await generateValidatedJSON(
-      this.ai,
-      IdeaEvaluationSchema,
-      evaluationPrompt.systemInstruction,
-      evaluationPrompt.prompt,
-    );
+    // GEMINI CALL 1 - SCORING. Runs alone, before anything else. Its
+    // validated 0.0-10.0 output (schema-enforced range, repair-then-throw
+    // on malformed output - see structuredOutput.ts) is the only thing
+    // that decides whether this idea proceeds.
+    const score = await this.linkedinScores.score(idea.id, trimmed);
+    const passed = score.linkedinScore >= this.minContentScore;
 
-    let research: ResearchResult | null = null;
-    if (evaluation.worthDeveloping && evaluation.researchQueries.length > 0) {
-      const query = evaluation.researchQueries[0];
-      if (query) {
-        research = await this.researchProvider.research(query);
-      }
-    }
-
-    const analysis = await this.analyses.create({
+    log.info("Scored idea against the content gate", {
+      userId,
       ideaId: idea.id,
-      ideaSummary: evaluation.ideaSummary,
-      worthDeveloping: evaluation.worthDeveloping,
-      reasoning: evaluation.reasoning,
-      angle: evaluation.angle,
-      research,
-      model: this.ai.modelName,
+      linkedinScore: score.linkedinScore,
+      minContentScore: this.minContentScore,
+      passed,
     });
 
-    await this.ideas.setStatus(
-      idea.id,
-      evaluation.worthDeveloping ? "worth_developing" : "not_worth_developing",
-    );
-
-    let draft: DraftRecord | null = null;
-    if (evaluation.worthDeveloping && evaluation.angle) {
-      draft = await this.generateAndSaveDraft({
-        userId,
-        idea,
-        analysisId: analysis.id,
-        ideaSummary: analysis.ideaSummary,
-        angle: evaluation.angle,
-        voiceProfile: voiceProfile.profile,
-        research,
-      });
-      await this.ideas.setStatus(idea.id, "drafted");
+    if (!passed) {
+      await this.ideas.setStatus(idea.id, "not_worth_developing");
+      // No Google News call, no drafting call - the low-score branch
+      // terminates here.
+      return { idea, score, passed: false, newsStatus: "not_searched", newsHook: null, draft: null };
     }
 
-    log.info("Processed idea", { userId, ideaId: idea.id, worthDeveloping: evaluation.worthDeveloping });
-    return { idea, analysis, research, draft };
+    await this.ideas.setStatus(idea.id, "worth_developing");
+
+    // GOOGLE NEWS RSS - context step, only reachable after the gate
+    // passes. A retrieval failure here must never fail the whole
+    // pipeline (the note already passed scoring) - it degrades to
+    // drafting without news, same as a genuine "nothing relevant found".
+    const { newsHook, newsStatus } = await this.findBestNewsHook(idea.id, trimmed);
+
+    // GEMINI CALL 2 - DRAFTING.
+    const draft = await this.generateAndSaveDraft({
+      userId,
+      idea,
+      voiceProfile: voiceProfile.profile,
+      newsHook,
+    });
+    await this.ideas.setStatus(idea.id, "drafted");
+
+    return { idea, score, passed: true, newsStatus, newsHook, draft };
   }
 
-  /** Re-runs draft generation for an existing, already-analyzed idea (used by /write <id>). */
+  /**
+   * Re-runs drafting for an existing idea regardless of its score (used
+   * by /write - Meera's explicit override of a rejected note, per section
+   * 11's "Disagree? /write anyway"). Reuses the idea's already-computed
+   * score rather than re-running Gemini Call 1 (every captured idea is
+   * scored up front in captureAndProcess, so there's always one to reuse).
+   * Runs a fresh Google News lookup since this is a distinct, explicit
+   * request.
+   */
   async draftForExistingIdea(userId: number, ideaId: number): Promise<IdeaPipelineResult> {
     const idea = await this.requireOwnedIdea(userId, ideaId);
     const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
-    const analysis = await this.analyses.getLatestForIdea(ideaId);
-    if (!analysis) {
+    const score = await this.linkedinScores.getLatest(idea.id);
+    if (!score) {
       throw new NotFoundError(
-        `No analysis found for idea ${ideaId}`,
-        "That idea hasn't been analyzed yet. Send it again as a new message so I can evaluate it first.",
+        `No score found for idea ${ideaId}`,
+        "That idea hasn't been scored yet. Send it again as a new message so I can evaluate it first.",
       );
     }
 
-    const angle =
-      analysis.angle ||
-      "No strong angle was identified initially - find the most honest, specific angle available and write from there.";
-    const research = parseResearchJson(analysis.researchJson);
+    const { newsHook, newsStatus } = await this.findBestNewsHook(idea.id, idea.rawText);
 
     const draft = await this.generateAndSaveDraft({
       userId,
       idea,
-      analysisId: analysis.id,
-      ideaSummary: analysis.ideaSummary,
-      angle,
       voiceProfile: voiceProfile.profile,
-      research,
+      newsHook,
     });
     await this.ideas.setStatus(idea.id, "drafted");
 
-    return { idea, analysis, research, draft };
+    return { idea, score, passed: true, newsStatus, newsHook, draft };
   }
 
-  /** Regenerates the draft for an idea using the author's feedback on the previous version. */
+  /**
+   * Regenerates the draft for an idea using the author's feedback on the
+   * previous version. Reuses the previous draft's own news hook (if any)
+   * rather than re-searching Google News on every rewrite - the hook
+   * shouldn't change out from under an in-progress revision.
+   */
   async rewriteDraft(userId: number, ideaId: number, feedback: string): Promise<DraftRecord> {
     const trimmedFeedback = feedback.trim();
     if (!trimmedFeedback) {
@@ -159,10 +168,6 @@ export class IdeaPipelineService {
 
     const idea = await this.requireOwnedIdea(userId, ideaId);
     const voiceProfile = await this.voiceProfiles.getActiveOrThrow(userId);
-    const analysis = await this.analyses.getLatestForIdea(ideaId);
-    if (!analysis) {
-      throw new NotFoundError(`No analysis found for idea ${ideaId}`, "That idea hasn't been analyzed yet.");
-    }
     const previousDraft = await this.drafts.getLatestForIdea(ideaId);
     if (!previousDraft) {
       throw new NotFoundError(
@@ -174,13 +179,48 @@ export class IdeaPipelineService {
     return this.generateAndSaveDraft({
       userId,
       idea,
-      analysisId: analysis.id,
-      ideaSummary: analysis.ideaSummary,
-      angle: analysis.angle || "",
       voiceProfile: voiceProfile.profile,
-      research: parseResearchJson(analysis.researchJson),
+      newsHook: previousDraft.newsHook,
       rewrite: { previousDraft: previousDraft.content, feedback: trimmedFeedback },
     });
+  }
+
+  /** Approves or rejects a draft - the Review Gate decision. Never publishes anything; only records Meera's call. */
+  async setDraftStatus(userId: number, draftId: number, status: "approved" | "rejected"): Promise<DraftRecord> {
+    const draft = await this.drafts.getById(draftId);
+    if (!draft) {
+      throw new NotFoundError(`Draft ${draftId} not found`, `I couldn't find draft #${draftId}.`);
+    }
+    await this.requireOwnedIdea(userId, draft.ideaId);
+
+    await this.drafts.setStatus(draftId, status);
+    const updated = await this.drafts.getById(draftId);
+    if (!updated) throw new NotFoundError(`Draft ${draftId} disappeared after update`, "Something went wrong recording your decision.");
+    return updated;
+  }
+
+  /** Most recently created draft for this user, for /approve and /reject when no id is given. */
+  async getLatestDraft(userId: number): Promise<DraftRecord | null> {
+    return this.drafts.getLatestForUser(userId);
+  }
+
+  private async findBestNewsHook(
+    ideaId: number,
+    rawText: string,
+  ): Promise<{ newsHook: IndustryHook | null; newsStatus: NewsStatus }> {
+    try {
+      const result = await this.industryHooks.findHooks(rawText);
+      if (result.status === "hooks_found" && result.hooks[0]) {
+        return { newsHook: result.hooks[0], newsStatus: "relevant_hook_found" };
+      }
+      return { newsHook: null, newsStatus: "no_relevant_hook" };
+    } catch (cause) {
+      // A note that already passed scoring must still get a draft - never
+      // fail the whole pipeline because Google News is unavailable, and
+      // never fabricate a hook to compensate.
+      log.warn("Google News retrieval failed; drafting without news", { ideaId, cause });
+      return { newsHook: null, newsStatus: "retrieval_failure" };
+    }
   }
 
   private async requireOwnedIdea(userId: number, ideaId: number): Promise<IdeaRecord> {
@@ -194,43 +234,33 @@ export class IdeaPipelineService {
   private async generateAndSaveDraft(params: {
     userId: number;
     idea: IdeaRecord;
-    analysisId: number;
-    ideaSummary: string;
-    angle: string;
     voiceProfile: VoiceProfile;
-    research: ResearchResult | null;
+    newsHook: IndustryHook | null;
     rewrite?: { previousDraft: string; feedback: string };
   }): Promise<DraftRecord> {
     const recentPosts = await this.posts.listRecentByUser(params.userId, RECENT_POSTS_FOR_REFERENCE);
     const recentPostExcerpts = recentPosts.map((p) => p.content);
 
     const { systemInstruction, prompt } = buildDraftGenerationPrompt({
-      ideaSummary: params.ideaSummary,
       rawIdea: params.idea.rawText,
-      angle: params.angle,
       voiceProfile: params.voiceProfile,
-      researchSummary: params.research?.summary ?? null,
+      newsHook: params.newsHook,
       recentPostExcerpts,
       rewrite: params.rewrite,
     });
 
-    const text = await this.ai.generateText({ systemInstruction, prompt });
+    const response = await generateValidatedJSON(this.ai, DraftResponseSchema, systemInstruction, prompt);
+    // The model's own signal for whether it actually used the hook - never
+    // shown as "used" just because a hook happened to be available.
+    const usedNewsHook = Boolean(params.newsHook) && response.usedNewsHook;
+
     return this.drafts.create(
       params.idea.id,
-      params.analysisId,
-      text.trim(),
+      response.draft.trim(),
       this.ai.modelName,
+      params.newsHook,
+      usedNewsHook,
       params.rewrite?.feedback ?? null,
     );
-  }
-}
-
-export function parseResearchJson(json: string | null): ResearchResult | null {
-  if (!json) return null;
-  try {
-    const parsed = ResearchResultSchema.safeParse(JSON.parse(json));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
   }
 }

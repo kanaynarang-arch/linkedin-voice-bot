@@ -7,6 +7,7 @@ import { handleProfile } from "./commands/profile.js";
 import { handleIdeas } from "./commands/ideas.js";
 import { handleWrite } from "./commands/write.js";
 import { handleRewrite } from "./commands/rewrite.js";
+import { handleApprove, handleReject } from "./commands/approve.js";
 import { startCollectingPosts, finishCollectingPosts, cancelCollectingPosts } from "./postsCollection.js";
 
 /**
@@ -31,6 +32,8 @@ export const COMMAND_HANDLERS: Record<string, (ctx: BotContext, args: string) =>
   ideas: (ctx) => handleIdeas(ctx),
   write: (ctx, args) => handleWrite(ctx, args),
   rewrite: (ctx, args) => handleRewrite(ctx, args),
+  approve: (ctx, args) => handleApprove(ctx, args),
+  reject: (ctx, args) => handleReject(ctx, args),
 };
 
 export const KNOWN_COMMAND_NAMES: ReadonlySet<string> = new Set(Object.keys(COMMAND_HANDLERS));

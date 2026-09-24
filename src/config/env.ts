@@ -8,6 +8,10 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().default("gemini-3.6-flash"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required (a Postgres connection string)"),
   MIN_POSTS_FOR_ANALYSIS: z.coerce.number().int().positive().default(5),
+  // The single gate: a note's Gemini content score must be >= this to
+  // proceed past scoring to Google News + drafting. Centralized here so
+  // there's exactly one threshold value in the whole app.
+  MIN_CONTENT_SCORE: z.coerce.number().min(0).max(10).default(6.0),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   // Only needed to run scripts/setWebhook.ts or when serving the webhook function.
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),

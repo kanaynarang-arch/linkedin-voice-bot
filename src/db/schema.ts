@@ -33,29 +33,73 @@ CREATE TABLE IF NOT EXISTS ideas (
 );
 CREATE INDEX IF NOT EXISTS idx_ideas_user ON ideas(user_id);
 
-CREATE TABLE IF NOT EXISTS analyses (
+-- Superseded by idea_scores (the Gemini scoring call) + the news_*/status
+-- columns on drafts below - the old worth_developing/angle gate and its
+-- Gemini-search-grounding "research" step aren't part of the required
+-- Meera workflow (score -> Google News RSS -> draft), so this table is
+-- retired. CASCADE drops the now-dangling drafts.analysis_id FK
+-- constraint (not the drafts table or its rows).
+DROP TABLE IF EXISTS analyses CASCADE;
+
+CREATE TABLE IF NOT EXISTS idea_scores (
   id SERIAL PRIMARY KEY,
   idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
-  idea_summary TEXT NOT NULL,
-  worth_developing BOOLEAN NOT NULL,
+  linkedin_score NUMERIC(3,1) NOT NULL,
+  professional_relevance NUMERIC(3,1) NOT NULL,
+  knowledge_value NUMERIC(3,1) NOT NULL,
+  original_perspective NUMERIC(3,1) NOT NULL,
+  dwell_read_potential NUMERIC(3,1) NOT NULL,
+  conversation_potential NUMERIC(3,1) NOT NULL,
+  timeliness NUMERIC(3,1) NOT NULL,
+  share_save_utility NUMERIC(3,1) NOT NULL,
+  authenticity_anti_slop NUMERIC(3,1) NOT NULL,
   reasoning TEXT NOT NULL,
-  angle TEXT,
-  research_json TEXT,
   model TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_analyses_idea ON analyses(idea_id);
+CREATE INDEX IF NOT EXISTS idx_idea_scores_idea ON idea_scores(idea_id);
 
+-- status: the Review Gate decision (section 36-37 of the Meera workflow) -
+-- 'pending' until Meera explicitly sends /approve or /reject. Approving
+-- only records her decision; it never publishes anything.
+-- news_*/used_news_hook: the single selected Google News RSS hook (if
+-- any) offered to the drafting call, and whether the draft actually used
+-- it - kept as flat nullable columns (not a JSON blob) matching this
+-- project's convention for fixed-shape structured data, and because a
+-- draft carries at most one hook (section 27: zero or one, never a dump).
 CREATE TABLE IF NOT EXISTS drafts (
   id SERIAL PRIMARY KEY,
   idea_id INTEGER NOT NULL REFERENCES ideas(id) ON DELETE CASCADE,
-  analysis_id INTEGER NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
   content TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
   feedback TEXT,
   model TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  news_title TEXT,
+  news_source TEXT,
+  news_google_url TEXT,
+  news_published_at TIMESTAMPTZ,
+  news_hook_strength NUMERIC(3,1),
+  news_connection_type TEXT,
+  news_relevance_reason TEXT,
+  news_hook_connection TEXT,
+  used_news_hook BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Idempotent upgrade path for a database that already has the old
+-- pre-audit shape (analysis_id FK, no status/news columns).
+ALTER TABLE drafts DROP COLUMN IF EXISTS analysis_id;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_title TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_source TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_google_url TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_published_at TIMESTAMPTZ;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_hook_strength NUMERIC(3,1);
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_connection_type TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_relevance_reason TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS news_hook_connection TEXT;
+ALTER TABLE drafts ADD COLUMN IF NOT EXISTS used_news_hook BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE INDEX IF NOT EXISTS idx_drafts_idea ON drafts(idea_id);
 -- Backstop against the version-number race: two concurrent draft writes
 -- for the same idea (e.g. a duplicate Telegram webhook delivery) can

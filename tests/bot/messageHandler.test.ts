@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { createTestSetup, sampleVoiceProfilePayload } from "../testUtils/testContainer.js";
+import { createTestSetup, sampleVoiceProfilePayload, samplePassingScoreDimensionsPayload } from "../testUtils/testContainer.js";
 import { createFakeCtx } from "../testUtils/fakeCtx.js";
 import { handleTextMessage, handleNonTextMessage } from "../../src/bot/handlers/messageHandler.js";
 import { MissingVoiceProfileError } from "../../src/utils/errors.js";
 
-const WORTH_NO_RESEARCH = {
-  ideaSummary: "Idea summary.",
-  worthDeveloping: true,
-  reasoning: "Specific and concrete enough.",
-  angle: "Direct angle.",
-  researchQueries: [],
+const SIMPLE_PLAN = {
+  concepts: ["preservative systems"],
+  queries: [{ query: "cosmetic preservative supplier change", concept: "preservative systems", pass: 1 }],
 };
+
+function draftResponse(text: string) {
+  return { draft: text, usedNewsHook: false };
+}
 
 describe("handleTextMessage", () => {
   it("asks for content when the message is empty", async () => {
@@ -56,15 +57,16 @@ describe("handleTextMessage", () => {
     await expect(handleTextMessage(ctx, "a brand new idea")).rejects.toThrow(MissingVoiceProfileError);
   });
 
-  it("resurfaces a previous analysis for a duplicate idea instead of calling the AI again", async () => {
+  it("resurfaces a previous result for a duplicate idea instead of calling the AI again", async () => {
     const { container, ai } = await createTestSetup(1);
     const user = await container.users.getOrCreate("chat-1");
     await container.posts.add(user.id, "a post");
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(user.id);
 
-    ai.queueJSON(WORTH_NO_RESEARCH);
-    ai.queueText("The first draft.");
+    ai.queueJSON(samplePassingScoreDimensionsPayload());
+    ai.queueJSON(SIMPLE_PLAN);
+    ai.queueJSON(draftResponse("The first draft."));
     const { ctx: ctx1 } = createFakeCtx(container, user.id);
     await handleTextMessage(ctx1, "the exact same idea text");
 
@@ -77,35 +79,37 @@ describe("handleTextMessage", () => {
     expect(await container.ideas.listByUser(user.id)).toHaveLength(1);
   });
 
-  it("retries analysis when resending text whose first attempt never got analyzed", async () => {
+  it("retries scoring when resending text whose first attempt never got scored", async () => {
     // Simulates a real production incident: the first attempt's AI call
     // failed after the idea row was already created, leaving it with no
-    // analysis. Resending the identical text must actually retry - not
-    // repeat "already sent, run /write" forever, since /write only drafts
-    // from an existing analysis and can never produce one from scratch.
+    // score. Resending the identical text must actually retry - not
+    // repeat "already sent, run /write" forever, since /write only
+    // re-drafts an idea that already has a score, it can't produce one
+    // from scratch.
     const { container, ai } = await createTestSetup(1);
     const user = await container.users.getOrCreate("chat-1");
     await container.posts.add(user.id, "a post");
     ai.queueJSON(sampleVoiceProfilePayload());
     await container.voiceProfileService.analyze(user.id);
 
-    const orphanedIdea = await container.ideas.create(user.id, "an idea whose analysis failed");
-    expect(await container.analyses.getLatestForIdea(orphanedIdea.id)).toBeNull();
+    const orphanedIdea = await container.ideas.create(user.id, "an idea whose scoring failed");
+    expect(await container.ideaScores.getLatestForIdea(orphanedIdea.id)).toBeNull();
 
     const jsonCallsBefore = ai.jsonCalls.length;
-    ai.queueJSON(WORTH_NO_RESEARCH);
-    ai.queueText("Draft after retry.");
+    ai.queueJSON(samplePassingScoreDimensionsPayload());
+    ai.queueJSON(SIMPLE_PLAN);
+    ai.queueJSON(draftResponse("Draft after retry."));
     const { ctx, replies } = createFakeCtx(container, user.id);
-    await handleTextMessage(ctx, "an idea whose analysis failed");
+    await handleTextMessage(ctx, "an idea whose scoring failed");
 
-    expect(ai.jsonCalls.length).toBe(jsonCallsBefore + 1);
+    expect(ai.jsonCalls.length).toBe(jsonCallsBefore + 3);
     expect(replies.join("\n")).not.toMatch(/already sent this idea/i);
     expect(replies.join("\n")).toContain("Draft after retry.");
 
     const ideas = await container.ideas.listByUser(user.id);
     expect(ideas).toHaveLength(2);
     const newIdea = ideas.find((i) => i.id !== orphanedIdea.id);
-    expect(newIdea && (await container.analyses.getLatestForIdea(newIdea.id))).not.toBeNull();
+    expect(newIdea && (await container.ideaScores.getLatestForIdea(newIdea.id))).not.toBeNull();
   });
 });
 

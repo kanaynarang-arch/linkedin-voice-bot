@@ -3,10 +3,12 @@ import type pg from "pg";
 import { wrapPool, applySchema, type Database } from "../../src/db/client.js";
 import { buildContainerFromParts, type Container } from "../../src/container.js";
 import { FakeAIProvider } from "./fakeAIProvider.js";
+import { FakeGoogleNewsClient } from "./fakeGoogleNewsClient.js";
 
 export interface TestSetup {
   container: Container;
   ai: FakeAIProvider;
+  newsClient: FakeGoogleNewsClient;
 }
 
 /**
@@ -24,12 +26,17 @@ export async function createTestDb(): Promise<Database> {
   return db;
 }
 
-/** Builds a fully wired container backed by an in-memory Postgres database and a fake AI provider. */
-export async function createTestSetup(minPostsForAnalysis = 3): Promise<TestSetup> {
+/**
+ * Builds a fully wired container backed by an in-memory Postgres database,
+ * a fake AI provider, and a fake Google News client (so no test ever makes
+ * a live network call, even indirectly through the idea pipeline's news step).
+ */
+export async function createTestSetup(minPostsForAnalysis = 3, minContentScore = 6.0): Promise<TestSetup> {
   const db = await createTestDb();
   const ai = new FakeAIProvider();
-  const container = buildContainerFromParts(db, ai, minPostsForAnalysis);
-  return { container, ai };
+  const newsClient = new FakeGoogleNewsClient();
+  const container = buildContainerFromParts(db, ai, minPostsForAnalysis, minContentScore, newsClient);
+  return { container, ai, newsClient };
 }
 
 const SAMPLE_VOICE_PROFILE = {
@@ -53,4 +60,53 @@ const SAMPLE_VOICE_PROFILE = {
 /** Returns a deep-cloned sample Voice Profile JSON payload, valid against VoiceProfileSchema. */
 export function sampleVoiceProfilePayload(): typeof SAMPLE_VOICE_PROFILE {
   return JSON.parse(JSON.stringify(SAMPLE_VOICE_PROFILE));
+}
+
+const SAMPLE_PASSING_SCORE_DIMENSIONS = {
+  professionalRelevance: 8,
+  knowledgeValue: 7,
+  originalPerspective: 6,
+  dwellReadPotential: 7,
+  conversationPotential: 6,
+  timeliness: 7,
+  shareSaveUtility: 6,
+  authenticityAntiSlop: 8,
+  reasoning: "Concrete professional observation with a specific example and a distinctive angle.",
+};
+
+/** A LinkedinScoreDimensions payload whose average is 6.875 -> 6.9, comfortably above the default 6.0 content gate. */
+export function samplePassingScoreDimensionsPayload(): typeof SAMPLE_PASSING_SCORE_DIMENSIONS {
+  return JSON.parse(JSON.stringify(SAMPLE_PASSING_SCORE_DIMENSIONS));
+}
+
+const SAMPLE_WEAK_SCORE_DIMENSIONS = {
+  professionalRelevance: 3,
+  knowledgeValue: 2,
+  originalPerspective: 2,
+  dwellReadPotential: 3,
+  conversationPotential: 2,
+  timeliness: 3,
+  shareSaveUtility: 2,
+  authenticityAntiSlop: 3,
+  reasoning: "No concrete claim, example, or data point - just a vague operational note.",
+};
+
+/** A LinkedinScoreDimensions payload whose average is 2.5, comfortably below the default 6.0 content gate. */
+export function sampleWeakScoreDimensionsPayload(): typeof SAMPLE_WEAK_SCORE_DIMENSIONS {
+  return JSON.parse(JSON.stringify(SAMPLE_WEAK_SCORE_DIMENSIONS));
+}
+
+/** A LinkedinScoreDimensions payload where every dimension equals `value`, so the aggregate score is exactly `value` - for gate-boundary tests. */
+export function uniformScoreDimensionsPayload(value: number): Record<string, number | string> {
+  return {
+    professionalRelevance: value,
+    knowledgeValue: value,
+    originalPerspective: value,
+    dwellReadPotential: value,
+    conversationPotential: value,
+    timeliness: value,
+    shareSaveUtility: value,
+    authenticityAntiSlop: value,
+    reasoning: `Uniform test score of ${value}.`,
+  };
 }

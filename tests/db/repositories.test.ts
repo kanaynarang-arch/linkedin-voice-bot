@@ -4,7 +4,6 @@ import { createTestDb } from "../testUtils/testContainer.js";
 import { UsersRepository } from "../../src/db/repositories/users.js";
 import { PostsRepository } from "../../src/db/repositories/posts.js";
 import { IdeasRepository } from "../../src/db/repositories/ideas.js";
-import { AnalysesRepository } from "../../src/db/repositories/analyses.js";
 import { DraftsRepository } from "../../src/db/repositories/drafts.js";
 import { ConversationStateRepository } from "../../src/db/repositories/conversationState.js";
 import { ProcessedUpdatesRepository } from "../../src/db/repositories/processedUpdates.js";
@@ -66,27 +65,63 @@ describe("repositories", () => {
   it("DraftsRepository increments version per idea", async () => {
     const users = new UsersRepository(db);
     const ideas = new IdeasRepository(db);
-    const analyses = new AnalysesRepository(db);
     const drafts = new DraftsRepository(db);
     const user = await users.getOrCreate("chat-1");
     const idea = await ideas.create(user.id, "an idea");
-    const analysis = await analyses.create({
-      ideaId: idea.id,
-      ideaSummary: "summary",
-      worthDeveloping: true,
-      reasoning: "reasoning",
-      angle: "angle",
-      research: null,
-      model: "test-model",
-    });
 
-    const v1 = await drafts.create(idea.id, analysis.id, "draft v1", "test-model");
-    const v2 = await drafts.create(idea.id, analysis.id, "draft v2", "test-model", "make it shorter");
+    const v1 = await drafts.create(idea.id, "draft v1", "test-model", null, false);
+    const v2 = await drafts.create(idea.id, "draft v2", "test-model", null, false, "make it shorter");
 
     expect(v1.version).toBe(1);
     expect(v2.version).toBe(2);
     expect((await drafts.getLatestForIdea(idea.id))?.id).toBe(v2.id);
     expect(v2.feedback).toBe("make it shorter");
+    expect(v1.status).toBe("pending");
+  });
+
+  it("DraftsRepository stores and rounds-trips a news hook", async () => {
+    const users = new UsersRepository(db);
+    const ideas = new IdeasRepository(db);
+    const drafts = new DraftsRepository(db);
+    const user = await users.getOrCreate("chat-1");
+    const idea = await ideas.create(user.id, "an idea");
+
+    const hook = {
+      title: "Supplier changes preservative system",
+      source: "Industry Wire",
+      googleNewsUrl: "https://news.google.com/rss/articles/x",
+      canonicalUrl: null,
+      publishedAt: "2026-01-01T00:00:00.000Z",
+      fetchedAt: "2026-01-01T00:00:00.000Z",
+      recency: "CURRENT" as const,
+      searchQuery: "cosmetic preservative supplier",
+      hookStrength: 7.5,
+      connectionType: "contextualizes" as const,
+      relevanceReason: "Direct match.",
+      hookConnection: "Recent example of the same issue.",
+    };
+
+    const draft = await drafts.create(idea.id, "draft content", "test-model", hook, true);
+
+    expect(draft.usedNewsHook).toBe(true);
+    expect(draft.newsHook?.title).toBe(hook.title);
+    expect(draft.newsHook?.source).toBe(hook.source);
+    expect(draft.newsHook?.googleNewsUrl).toBe(hook.googleNewsUrl);
+    expect(draft.newsHook?.hookStrength).toBe(hook.hookStrength);
+    expect(draft.newsHook?.connectionType).toBe(hook.connectionType);
+  });
+
+  it("DraftsRepository setStatus records the Review Gate decision", async () => {
+    const users = new UsersRepository(db);
+    const ideas = new IdeasRepository(db);
+    const drafts = new DraftsRepository(db);
+    const user = await users.getOrCreate("chat-1");
+    const idea = await ideas.create(user.id, "an idea");
+    const draft = await drafts.create(idea.id, "draft content", "test-model", null, false);
+    expect(draft.status).toBe("pending");
+
+    await drafts.setStatus(draft.id, "approved");
+    expect((await drafts.getById(draft.id))?.status).toBe("approved");
   });
 
   it("ConversationStateRepository persists and resets per-user state", async () => {
@@ -116,31 +151,21 @@ describe("repositories", () => {
   it("DraftsRepository rejects a second draft with the same idea_id and version", async () => {
     const users = new UsersRepository(db);
     const ideas = new IdeasRepository(db);
-    const analyses = new AnalysesRepository(db);
     const user = await users.getOrCreate("chat-1");
     const idea = await ideas.create(user.id, "an idea");
-    const analysis = await analyses.create({
-      ideaId: idea.id,
-      ideaSummary: "summary",
-      worthDeveloping: true,
-      reasoning: "reasoning",
-      angle: "angle",
-      research: null,
-      model: "test-model",
-    });
 
     // Bypasses the repository's own version computation to simulate two
     // concurrent writers both landing on version 1 - the unique index is
     // the backstop for that race, so the second raw insert must fail
     // rather than silently succeed with an ambiguous duplicate.
-    await db.query(
-      "INSERT INTO drafts (idea_id, analysis_id, content, version, model) VALUES ($1, $2, $3, 1, $4)",
-      [idea.id, analysis.id, "first", "test-model"],
-    );
+    await db.query("INSERT INTO drafts (idea_id, content, version, model) VALUES ($1, $2, 1, $3)", [
+      idea.id,
+      "first",
+      "test-model",
+    ]);
     await expect(
-      db.query("INSERT INTO drafts (idea_id, analysis_id, content, version, model) VALUES ($1, $2, $3, 1, $4)", [
+      db.query("INSERT INTO drafts (idea_id, content, version, model) VALUES ($1, $2, 1, $3)", [
         idea.id,
-        analysis.id,
         "second",
         "test-model",
       ]),

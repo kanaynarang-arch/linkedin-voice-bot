@@ -4,28 +4,37 @@ import { UsersRepository } from "./db/repositories/users.js";
 import { PostsRepository } from "./db/repositories/posts.js";
 import { VoiceProfilesRepository } from "./db/repositories/voiceProfiles.js";
 import { IdeasRepository } from "./db/repositories/ideas.js";
-import { AnalysesRepository } from "./db/repositories/analyses.js";
 import { DraftsRepository } from "./db/repositories/drafts.js";
 import { ConversationStateRepository } from "./db/repositories/conversationState.js";
 import { ProcessedUpdatesRepository } from "./db/repositories/processedUpdates.js";
+import { IdeaScoresRepository } from "./db/repositories/ideaScores.js";
 import { GeminiProvider } from "./ai/gemini.js";
-import type { AIProvider, ResearchProvider } from "./ai/provider.js";
+import type { AIProvider } from "./ai/provider.js";
 import { VoiceProfileService } from "./domain/voiceProfileService.js";
+import { LinkedinScoreService } from "./domain/linkedinScoreService.js";
+import { IndustryHookService } from "./domain/industryHookService.js";
 import { IdeaPipelineService } from "./domain/ideaPipeline.js";
+import { RealGoogleNewsClient, type GoogleNewsClient } from "./news/googleNewsClient.js";
 
 export interface Container {
   db: Database;
-  ai: AIProvider & ResearchProvider;
+  ai: AIProvider;
   minPostsForAnalysis: number;
+  minContentScore: number;
   users: UsersRepository;
   posts: PostsRepository;
   voiceProfiles: VoiceProfilesRepository;
   ideas: IdeasRepository;
-  analyses: AnalysesRepository;
   drafts: DraftsRepository;
   conversationState: ConversationStateRepository;
   processedUpdates: ProcessedUpdatesRepository;
+  ideaScores: IdeaScoresRepository;
   voiceProfileService: VoiceProfileService;
+  /** Gemini scoring call (Call 1) - the sole content gate. */
+  linkedinScoreService: LinkedinScoreService;
+  /** Google News RSS context step, run only after the scoring gate passes. */
+  industryHookService: IndustryHookService;
+  /** Orchestrates the full required workflow: score -> gate -> news -> draft (Gemini Call 2). */
   ideaPipeline: IdeaPipelineService;
 }
 
@@ -33,44 +42,61 @@ export interface Container {
 export async function buildContainer(env: Env): Promise<Container> {
   const db = await openDatabase(env.DATABASE_URL);
   const ai = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL });
-  return buildContainerFromParts(db, ai, env.MIN_POSTS_FOR_ANALYSIS);
+  return buildContainerFromParts(db, ai, env.MIN_POSTS_FOR_ANALYSIS, env.MIN_CONTENT_SCORE);
 }
 
 /**
  * Wires the container from already-constructed pieces. Used directly by
- * tests so they can pass an in-memory (pg-mem) database and a fake AI
- * provider without needing real credentials.
+ * tests so they can pass an in-memory (pg-mem) database, a fake AI
+ * provider, and a fake Google News client without needing real
+ * credentials or live network access.
  */
 export function buildContainerFromParts(
   db: Database,
-  ai: AIProvider & ResearchProvider,
+  ai: AIProvider,
   minPostsForAnalysis: number,
+  minContentScore = 6.0,
+  newsClient: GoogleNewsClient = new RealGoogleNewsClient(),
 ): Container {
   const users = new UsersRepository(db);
   const posts = new PostsRepository(db);
   const voiceProfiles = new VoiceProfilesRepository(db);
   const ideas = new IdeasRepository(db);
-  const analyses = new AnalysesRepository(db);
   const drafts = new DraftsRepository(db);
   const conversationState = new ConversationStateRepository(db);
   const processedUpdates = new ProcessedUpdatesRepository(db);
+  const ideaScores = new IdeaScoresRepository(db);
 
   const voiceProfileService = new VoiceProfileService(ai, posts, voiceProfiles, minPostsForAnalysis);
-  const ideaPipeline = new IdeaPipelineService(ai, ai, ideas, analyses, drafts, posts, voiceProfileService);
+  const linkedinScoreService = new LinkedinScoreService(ai, ideaScores);
+  const industryHookService = new IndustryHookService(ai, newsClient);
+  const ideaPipeline = new IdeaPipelineService(
+    ai,
+    ideas,
+    drafts,
+    posts,
+    voiceProfileService,
+    linkedinScoreService,
+    industryHookService,
+    minContentScore,
+  );
 
   return {
     db,
     ai,
     minPostsForAnalysis,
+    minContentScore,
     users,
     posts,
     voiceProfiles,
     ideas,
-    analyses,
     drafts,
     conversationState,
     processedUpdates,
+    ideaScores,
     voiceProfileService,
+    linkedinScoreService,
+    industryHookService,
     ideaPipeline,
   };
 }
