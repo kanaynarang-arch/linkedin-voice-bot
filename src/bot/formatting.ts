@@ -77,7 +77,11 @@ export function formatPipelineResult(result: IdeaPipelineResult): string {
 
     lines.push(
       "",
-      `Review before posting - you decide whether and how to publish. Reply "/rewrite ${result.idea.id} <feedback>" to revise, "/write ${result.idea.id}" to regenerate from scratch, or "/approve ${result.idea.id}" / "/reject ${result.idea.id}" to record your decision.`,
+      "Review before posting - you decide whether and how to publish.",
+      `/rewrite ${result.idea.id} <feedback> - revise this draft`,
+      `/write ${result.idea.id} - regenerate from scratch`,
+      `/approve ${result.idea.id} - record that you approve it`,
+      `/reject ${result.idea.id} - record that you reject it`,
     );
   }
 
